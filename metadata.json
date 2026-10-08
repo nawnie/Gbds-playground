@@ -1,0 +1,6 @@
+{
+  "name": "EdgePilot",
+  "description": "AI Edge harness for GBA and 3DS games with live screen analysis, memory mapping, live chat & goal planning, ADB Wi-Fi diagnostics, and Python automation.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

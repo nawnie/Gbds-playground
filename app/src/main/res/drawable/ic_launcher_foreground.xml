@@ -1,0 +1,49 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+
+    <!-- Handheld Console Body (Clamshell / GBA SP silhouette centered) -->
+    <path
+        android:fillColor="#E0E7FF"
+        android:pathData="M32,22 L76,22 A8,8 0 0 1 84,30 L84,78 A8,8 0 0 1 76,86 L32,86 A8,8 0 0 1 24,78 L24,30 A8,8 0 0 1 32,22 Z" />
+
+    <!-- Screen Bezel -->
+    <path
+        android:fillColor="#1E293B"
+        android:pathData="M31,28 L77,28 A4,4 0 0 1 81,32 L81,56 A4,4 0 0 1 77,60 L31,60 A4,4 0 0 1 27,56 L27,32 A4,4 0 0 1 31,28 Z" />
+
+    <!-- Inner Screen Glow (Teal/Cyan) -->
+    <path
+        android:fillColor="#0284C7"
+        android:pathData="M33,31 L75,31 A2,2 0 0 1 77,33 L77,53 A2,2 0 0 1 75,55 L33,55 A2,2 0 0 1 31,53 L31,33 A2,2 0 0 1 33,31 Z" />
+
+    <!-- AI Spark / Neural Node in screen center -->
+    <path
+        android:fillColor="#38BDF8"
+        android:pathData="M54,36 L56,41 L61,43 L56,45 L54,50 L52,45 L47,43 L52,41 Z" />
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M54,40 L55,42 L57,43 L55,44 L54,46 L53,44 L51,43 L53,42 Z" />
+
+    <!-- D-Pad (Cross) on bottom left -->
+    <path
+        android:fillColor="#475569"
+        android:pathData="M37,67 H43 V70 H37 Z M37,74 H43 V77 H37 Z M34,70 H46 V74 H34 Z" />
+
+    <!-- Action Buttons (A and B) on bottom right -->
+    <path
+        android:fillColor="#EF4444"
+        android:pathData="M73,71 A3,3 0 1 1 73,65 A3,3 0 1 1 73,71 Z" />
+    <path
+        android:fillColor="#3B82F6"
+        android:pathData="M65,77 A3,3 0 1 1 65,71 A3,3 0 1 1 65,77 Z" />
+
+    <!-- Center Hinge / Select Start -->
+    <path
+        android:fillColor="#94A3B8"
+        android:pathData="M50,79 H53 V81 H50 Z M55,79 H58 V81 H55 Z" />
+
+</vector>
