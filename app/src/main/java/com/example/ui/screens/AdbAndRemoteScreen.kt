@@ -67,6 +67,8 @@ fun AdbAndRemoteScreen(
   modifier: Modifier = Modifier
 ) {
   val adbStatus by viewModel.adbBridge.status.collectAsState()
+  val bridgeMode by viewModel.adbBridge.bridgeMode.collectAsState()
+  val lifecycleStatus by viewModel.adbBridge.lifecycleStatus.collectAsState()
 
   var ipInput by remember { mutableStateOf(adbStatus.ipAddress) }
   var portInput by remember { mutableStateOf(adbStatus.port.toString()) }
@@ -102,6 +104,95 @@ fun AdbAndRemoteScreen(
       Spacer(modifier = Modifier.height(14.dp))
     }
 
+    // Explicit Mode Selector: Live Wi-Fi Socket vs Demo Loopback Harness
+    item {
+      Text(
+        text = "BRIDGE OPERATING MODE:",
+        color = NeonCyan,
+        fontSize = 10.sp,
+        fontWeight = FontWeight.Bold,
+        fontFamily = FontFamily.Monospace
+      )
+      Spacer(modifier = Modifier.height(6.dp))
+      Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.spacedBy(8.dp)
+      ) {
+        com.example.engine.AdbBridgeMode.entries.forEach { mode ->
+          val isSelected = bridgeMode == mode
+          Box(
+            modifier = Modifier
+              .weight(1f)
+              .clip(RoundedCornerShape(8.dp))
+              .background(if (isSelected) Color(0xFF1E3A8A) else Color(0xFF0F172A))
+              .border(
+                width = if (isSelected) 1.5.dp else 0.5.dp,
+                color = if (isSelected) NeonCyan else Color(0xFF334155),
+                shape = RoundedCornerShape(8.dp)
+              )
+              .clickable { viewModel.adbBridge.setBridgeMode(mode) }
+              .padding(vertical = 8.dp, horizontal = 4.dp),
+            contentAlignment = Alignment.Center
+          ) {
+            Text(
+              text = mode.label,
+              color = if (isSelected) Color.White else TextMuted,
+              fontSize = 9.sp,
+              fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
+              fontFamily = FontFamily.Monospace
+            )
+          }
+        }
+      }
+      Spacer(modifier = Modifier.height(10.dp))
+    }
+
+    // Verified Lifecycle Status Banner (Demo, Loading, Ready, Failed)
+    item {
+      Card(
+        modifier = Modifier.fillMaxWidth().padding(bottom = 12.dp),
+        colors = CardDefaults.cardColors(containerColor = Color(0xFF070E20)),
+        shape = RoundedCornerShape(8.dp)
+      ) {
+        Row(
+          modifier = Modifier.fillMaxWidth().padding(10.dp),
+          verticalAlignment = Alignment.CenterVertically
+        ) {
+          Box(
+            modifier = Modifier
+              .clip(RoundedCornerShape(4.dp))
+              .background(Color(lifecycleStatus.state.badgeColorHex))
+              .padding(horizontal = 6.dp, vertical = 2.dp)
+          ) {
+            Text(
+              text = lifecycleStatus.state.label,
+              color = Color.White,
+              fontSize = 8.5.sp,
+              fontWeight = FontWeight.Bold,
+              fontFamily = FontFamily.Monospace
+            )
+          }
+          Spacer(modifier = Modifier.width(8.dp))
+          Column(modifier = Modifier.weight(1f)) {
+            Text(
+              text = lifecycleStatus.message,
+              color = TextPrimary,
+              fontSize = 11.sp,
+              fontWeight = FontWeight.Bold
+            )
+            lifecycleStatus.detail?.let {
+              Text(
+                text = it,
+                color = TextSecondary,
+                fontSize = 9.5.sp,
+                fontFamily = FontFamily.Monospace
+              )
+            }
+          }
+        }
+      }
+    }
+
     // 1. Wi-Fi ADB Connection Box
     item {
       Card(
@@ -123,10 +214,10 @@ fun AdbAndRemoteScreen(
               )
               Spacer(modifier = Modifier.width(6.dp))
               Text(
-                text = if (adbStatus.isConnected) "ADB WI-FI CONNECTED" else "ADB DISCONNECTED",
+                text = if (adbStatus.isConnected) "DAEMON STATUS: ACTIVE" else "DAEMON STATUS: INACTIVE",
                 color = if (adbStatus.isConnected) EmeraldRam else RubyAction,
                 fontWeight = FontWeight.Bold,
-                fontSize = 12.sp,
+                fontSize = 11.sp,
                 fontFamily = FontFamily.Monospace
               )
             }
@@ -193,7 +284,11 @@ fun AdbAndRemoteScreen(
             ) {
               Icon(Icons.Default.Wifi, contentDescription = null, modifier = Modifier.size(16.dp))
               Spacer(modifier = Modifier.width(4.dp))
-              Text(if (adbStatus.isConnected) "Re-Sync Bridge" else "Connect ADB", fontSize = 11.sp, fontWeight = FontWeight.Bold)
+              Text(
+                text = if (bridgeMode == com.example.engine.AdbBridgeMode.LIVE_WIFI_SOCKET) "Probe & Connect Socket" else "Bind Demo Loopback",
+                fontSize = 10.5.sp,
+                fontWeight = FontWeight.Bold
+              )
             }
 
             if (adbStatus.isConnected) {

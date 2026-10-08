@@ -5,7 +5,9 @@ import com.example.model.GameConsoleMode
 import com.example.model.GamepadKey
 import com.example.model.GameScenario
 import com.example.model.GameStateSnapshot
+import com.example.model.InputOwner
 import com.example.model.MemoryWatchEntry
+import com.example.model.TouchPoint
 import com.example.model.VisionCategory
 import com.example.model.VisionDetection
 import kotlinx.coroutines.CoroutineScope
@@ -21,8 +23,9 @@ import kotlinx.coroutines.launch
 import kotlin.random.Random
 
 /**
- * Emulated Virtual Console Engine for GBA and 3DS systems
- * Features screen simulation, live RAM memory mapping, CV analysis overlays, and input buffers.
+ * Emulated Virtual Console Engine for GBA and 3DS systems.
+ * Provides a real input contract with simultaneous keypresses, held states,
+ * release events, touch-screen digitizer, pause/takeover enforcement, and memory gatekeeping.
  */
 class VirtualConsoleEngine(
   private val scope: CoroutineScope
@@ -32,7 +35,7 @@ class VirtualConsoleEngine(
       scenario = GameScenario.POKEMON_RED,
       consoleMode = GameConsoleMode.GBA,
       zoneName = "Pallet Town - Route 1",
-      dialogText = "Now tell me. Are you a boy? Or are you a girl?"
+      dialogText = "Now tell me. Are you a boy or a girl?"
     )
   )
   val gameState: StateFlow<GameStateSnapshot> = _gameState.asStateFlow()
@@ -42,19 +45,19 @@ class VirtualConsoleEngine(
     mapOf(
       "0x02024284" to 12,    // Player X
       "0x02024286" to 18,    // Player Y
-      "0x0202402C" to 22,    // Player HP
-      "0x0202402E" to 22,    // Player Max HP
-      "0x02024090" to 3000,  // Money / Coins
+      "0x0202402C" to 20,    // Player HP
+      "0x0202402E" to 20,    // Player Max HP
+      "0x02024090" to 1000,  // Money / Coins
       "0x02024036" to 5,     // Player Level
       "0x020386E0" to 0,     // Battle State Flag (0 = Field, 1 = Battle)
-      "0x03004020" to 0x0000 // Key Input Buffer
+      "0x03004020" to 0x03FF // Key Input Buffer (GBA active-low 10-bit register)
     )
   )
 
   // Active Cheat Switches
   private val _cheats = MutableStateFlow<List<GameCheat>>(
     listOf(
-      GameCheat("c1", "Infinite HP / God Mode", "Locks Player HP to Max HP permanently", "0x0202402C", "0x0016", false, "STATS"),
+      GameCheat("c1", "Infinite HP / God Mode", "Locks Player HP to Max HP permanently", "0x0202402C", "0x0014", false, "STATS"),
       GameCheat("c2", "Walk Through Walls (Ghost Clip)", "Disables tile collision checks in RAM", "0x020370E4", "0x0001", false, "MOVEMENT"),
       GameCheat("c3", "Max Money ($999,999)", "Pokes money offset to maximum value", "0x02024090", "0x000F423F", false, "RESOURCES"),
       GameCheat("c4", "One-Hit KO in Battles", "Reduces opponent HP to 0 on attack", "0x02024040", "0x0000", false, "BATTLE"),
@@ -63,6 +66,10 @@ class VirtualConsoleEngine(
     )
   )
   val cheats: StateFlow<List<GameCheat>> = _cheats.asStateFlow()
+
+  // Set of actively held keys (input contract)
+  private val _activeKeys = MutableStateFlow<Set<GamepadKey>>(emptySet())
+  val activeKeys: StateFlow<Set<GamepadKey>> = _activeKeys.asStateFlow()
 
   // Memory Freeze Set
   private val frozenAddresses = mutableSetOf<String>()
@@ -73,7 +80,140 @@ class VirtualConsoleEngine(
     startEngineLoop()
   }
 
+  // --------------------------------------------------------------------------
+  // INPUT CONTRACT: KeyDown, KeyUp, ReleaseAll, Analog, Touch
+  // --------------------------------------------------------------------------
+
+  fun onKeyDown(key: GamepadKey) {
+    if (_gameState.value.isPaused) return
+    _activeKeys.update { it + key }
+    dispatchInputState()
+  }
+
+  fun onKeyUp(key: GamepadKey) {
+    _activeKeys.update { it - key }
+    dispatchInputState()
+  }
+
+  fun releaseAllKeys() {
+    _activeKeys.value = emptySet()
+    dispatchInputState()
+  }
+
+  fun onCirclePad(dx: Float, dy: Float) {
+    if (_gameState.value.isPaused) return
+    _gameState.update { it.copy(circlePadOffset = Pair(dx.coerceIn(-1f, 1f), dy.coerceIn(-1f, 1f))) }
+  }
+
+  fun onTouchDown(xNorm: Float, yNorm: Float) {
+    if (_gameState.value.isPaused) return
+    val point = TouchPoint(xNorm.coerceIn(0f, 1f), yNorm.coerceIn(0f, 1f), isDown = true)
+    _gameState.update { it.copy(touchPoint = point) }
+
+    // If in battle on 3DS bottom screen, evaluate touch zones
+    handleTouchInteraction(xNorm, yNorm)
+  }
+
+  fun onTouchUp() {
+    _gameState.update { it.copy(touchPoint = null) }
+  }
+
+  private fun handleTouchInteraction(x: Float, y: Float) {
+    val state = _gameState.value
+    if (state.isInBattle) {
+      // 3DS 2x2 Battle Grid on bottom screen:
+      // Top-Left: FIGHT (A)
+      // Top-Right: BAG (Items)
+      // Bottom-Left: POKEMON (Switch)
+      // Bottom-Right: RUN (B)
+      if (x < 0.5f && y < 0.5f) {
+        // FIGHT
+        onKeyDown(GamepadKey.A)
+        scope.launch { delay(60); onKeyUp(GamepadKey.A) }
+      } else if (x >= 0.5f && y >= 0.5f) {
+        // RUN
+        onKeyDown(GamepadKey.B)
+        scope.launch { delay(60); onKeyUp(GamepadKey.B) }
+      } else if (x >= 0.5f && y < 0.5f) {
+        _gameState.update { it.copy(dialogText = "Opened Bag: 15x Poké Balls, 3x Potions available.") }
+      } else {
+        _gameState.update { it.copy(dialogText = "Party: 1. Starter (Lv ${state.playerLevel}), 2. Pidgey (Lv 3).") }
+      }
+    } else {
+      // Overworld touch interaction
+      if (x in 0.35f..0.65f && y in 0.35f..0.65f) {
+        // Center tap interacts with object / dialog
+        onKeyDown(GamepadKey.A)
+        scope.launch { delay(60); onKeyUp(GamepadKey.A) }
+      }
+    }
+  }
+
+  private fun dispatchInputState() {
+    val keys = _activeKeys.value
+    val bufferHex = computeKeyInputBufferHex(keys)
+    val lastName = if (keys.isNotEmpty()) keys.joinToString("+") { it.name } else "IDLE"
+
+    _gameState.update {
+      it.copy(
+        pressedKeys = keys,
+        lastInputKey = lastName,
+        inputBufferHex = bufferHex
+      )
+    }
+    _memoryMap.update { current ->
+      current.toMutableMap().apply {
+        put("0x03004020", bufferHex.removePrefix("0x").toIntOrNull(16) ?: 0)
+      }
+    }
+  }
+
+  /**
+   * Computes authentic GBA REG_KEYINPUT active-low bitfield
+   * Bit 0: A, Bit 1: B, Bit 2: Select, Bit 3: Start,
+   * Bit 4: Right, Bit 5: Left, Bit 6: Up, Bit 7: Down, Bit 8: R, Bit 9: L
+   */
+  private fun computeKeyInputBufferHex(keys: Set<GamepadKey>): String {
+    var bitmask = 0x03FF
+    if (keys.contains(GamepadKey.A)) bitmask = bitmask and (1 shl 0).inv()
+    if (keys.contains(GamepadKey.B)) bitmask = bitmask and (1 shl 1).inv()
+    if (keys.contains(GamepadKey.SELECT)) bitmask = bitmask and (1 shl 2).inv()
+    if (keys.contains(GamepadKey.START)) bitmask = bitmask and (1 shl 3).inv()
+    if (keys.contains(GamepadKey.RIGHT)) bitmask = bitmask and (1 shl 4).inv()
+    if (keys.contains(GamepadKey.LEFT)) bitmask = bitmask and (1 shl 5).inv()
+    if (keys.contains(GamepadKey.UP)) bitmask = bitmask and (1 shl 6).inv()
+    if (keys.contains(GamepadKey.DOWN)) bitmask = bitmask and (1 shl 7).inv()
+    if (keys.contains(GamepadKey.R) || keys.contains(GamepadKey.ZR)) bitmask = bitmask and (1 shl 8).inv()
+    if (keys.contains(GamepadKey.L) || keys.contains(GamepadKey.ZL)) bitmask = bitmask and (1 shl 9).inv()
+    return String.format("0x%04X", bitmask)
+  }
+
+  // --------------------------------------------------------------------------
+  // PAUSE & INPUT OWNERSHIP COORDINATION
+  // --------------------------------------------------------------------------
+
+  fun setPaused(paused: Boolean) {
+    if (paused) {
+      releaseAllKeys()
+    }
+    _gameState.update {
+      it.copy(
+        isPaused = paused,
+        inputOwner = if (paused) InputOwner.PAUSED else it.inputOwner
+      )
+    }
+  }
+
+  fun setInputOwner(owner: InputOwner) {
+    _gameState.update { it.copy(inputOwner = owner) }
+  }
+
+  // --------------------------------------------------------------------------
+  // SCENARIO & CONSOLE MANAGEMENT
+  // --------------------------------------------------------------------------
+
   fun switchScenario(scenario: GameScenario) {
+    releaseAllKeys()
     _gameState.update {
       it.copy(
         scenario = scenario,
@@ -104,16 +244,32 @@ class VirtualConsoleEngine(
     _gameState.update { it.copy(consoleMode = mode) }
   }
 
+  // --------------------------------------------------------------------------
+  // EMULATION TICK & PHYSICS ENGINE LOOP
+  // --------------------------------------------------------------------------
+
   private fun startEngineLoop() {
     loopJob?.cancel()
     loopJob = scope.launch(Dispatchers.Default) {
       var frame = 0L
+      var physicsCounter = 0
       while (isActive) {
         frame++
         delay(16) // ~60 FPS update cycle
 
-        // Apply any active memory cheats
+        // Halt frame progression if paused
+        if (_gameState.value.isPaused) {
+          continue
+        }
+
+        // Apply cheats if active
         applyActiveCheats()
+
+        // Physics movement tick (every 4 frames ~15 FPS step rate when keys are held)
+        physicsCounter++
+        if (physicsCounter % 4 == 0) {
+          processContinuousInputPhysics()
+        }
 
         // Update real-time CV detections and memory state
         val current = _gameState.value
@@ -132,102 +288,41 @@ class VirtualConsoleEngine(
     }
   }
 
-  private fun applyActiveCheats() {
-    val enabledCheats = _cheats.value.filter { it.isEnabled }
-    for (cheat in enabledCheats) {
-      when (cheat.id) {
-        "c1" -> { // God Mode
-          _gameState.update { it.copy(playerHp = it.playerMaxHp) }
-          pokeMemory("0x0202402C", String.format("0x%04X", _gameState.value.playerMaxHp))
-        }
-        "c3" -> { // Max Money
-          _gameState.update { it.copy(coins = 999999) }
-          pokeMemory("0x02024090", "0x000F423F")
-        }
-        "c4" -> { // One Hit KO
-          if (_gameState.value.isInBattle && _gameState.value.enemyHp > 1) {
-            _gameState.update { it.copy(enemyHp = 1) }
-          }
-        }
-      }
-    }
-  }
-
-  fun sendInput(key: GamepadKey) {
-    val inputHex = when (key) {
-      GamepadKey.UP -> "0x0040"
-      GamepadKey.DOWN -> "0x0080"
-      GamepadKey.LEFT -> "0x0020"
-      GamepadKey.RIGHT -> "0x0010"
-      GamepadKey.A -> "0x0001"
-      GamepadKey.B -> "0x0002"
-      GamepadKey.X -> "0x0100"
-      GamepadKey.Y -> "0x0200"
-      GamepadKey.L -> "0x0200"
-      GamepadKey.R -> "0x0100"
-      GamepadKey.START -> "0x0008"
-      GamepadKey.SELECT -> "0x0004"
-      GamepadKey.MENU -> "0x0000"
-    }
+  private fun processContinuousInputPhysics() {
+    val keys = _activeKeys.value
+    val circleOffset = _gameState.value.circlePadOffset
+    if (keys.isEmpty() && circleOffset == Pair(0f, 0f)) return
 
     _gameState.update { state ->
       val stepMultiplier = if (_cheats.value.any { it.id == "c5" && it.isEnabled }) 2 else 1
       var newX = state.playerX
       var newY = state.playerY
 
-      when (key) {
-        GamepadKey.UP -> newY = (newY - stepMultiplier).coerceAtLeast(4)
-        GamepadKey.DOWN -> newY = (newY + stepMultiplier).coerceAtMost(36)
-        GamepadKey.LEFT -> newX = (newX - stepMultiplier).coerceAtLeast(4)
-        GamepadKey.RIGHT -> newX = (newX + stepMultiplier).coerceAtMost(36)
-        GamepadKey.A -> {
-          // Progress dialogue or attack in battle
-          if (state.isInBattle) {
-            val newEnemyHp = (state.enemyHp - 8).coerceAtLeast(0)
-            if (newEnemyHp == 0) {
-              return@update state.copy(
-                isInBattle = false,
-                enemyName = null,
-                enemyHp = 0,
-                dialogText = "Enemy defeated! Gained 74 EXP and $120.",
-                coins = state.coins + 120,
-                lastInputKey = key.name,
-                inputBufferHex = inputHex
-              )
-            } else {
-              return@update state.copy(
-                enemyHp = newEnemyHp,
-                dialogText = "Critical Hit! ${state.enemyName} HP down to $newEnemyHp.",
-                lastInputKey = key.name,
-                inputBufferHex = inputHex
-              )
-            }
-          }
-        }
-        GamepadKey.B -> {
-          // Cancel / Run away
-          if (state.isInBattle) {
-            return@update state.copy(
-              isInBattle = false,
-              enemyName = null,
-              dialogText = "Got away safely!",
-              lastInputKey = key.name,
-              inputBufferHex = inputHex
-            )
-          }
-        }
-        else -> Unit
-      }
+      // Simultaneous Multi-Direction handling (supports diagonal movement!)
+      var dx = 0
+      var dy = 0
 
-      // Check random wild encounter when moving in tall grass
+      if (keys.contains(GamepadKey.UP) || circleOffset.second < -0.3f) dy -= 1
+      if (keys.contains(GamepadKey.DOWN) || circleOffset.second > 0.3f) dy += 1
+      if (keys.contains(GamepadKey.LEFT) || circleOffset.first < -0.3f) dx -= 1
+      if (keys.contains(GamepadKey.RIGHT) || circleOffset.first > 0.3f) dx += 1
+
+      // Speed turbo if B is held (B-Dash!)
+      val runMultiplier = if (keys.contains(GamepadKey.B)) 2 else 1
+      val totalStep = stepMultiplier * runMultiplier
+
+      newX = (newX + dx * totalStep).coerceIn(4, 36)
+      newY = (newY + dy * totalStep).coerceIn(4, 36)
+
+      // Random wild encounter chance when moving through grass in overworld
       var battle = state.isInBattle
       var enemy = state.enemyName
       var enemyHp = state.enemyHp
       var enemyMaxHp = state.enemyMaxHp
       var dialog = state.dialogText
 
-      if (!battle && (key == GamepadKey.UP || key == GamepadKey.DOWN || key == GamepadKey.LEFT || key == GamepadKey.RIGHT)) {
-        if (Random.nextInt(100) < 12) { // 12% encounter chance on step
+      if (!battle && (dx != 0 || dy != 0)) {
+        if (Random.nextInt(100) < 8) { // 8% encounter check
           battle = true
           val wildList = if (state.scenario == GameScenario.POKEMON_RED) {
             listOf("Wild Pidgey", "Wild Rattata", "Wild Nidoran♂", "Wild Pikachu", "Wild Caterpie")
@@ -241,6 +336,19 @@ class VirtualConsoleEngine(
         }
       }
 
+      // Single action clicks (A attacks in battle)
+      if (keys.contains(GamepadKey.A) && battle) {
+        val newEnemyHp = (enemyHp - 7).coerceAtLeast(0)
+        if (newEnemyHp == 0) {
+          battle = false
+          enemy = null
+          dialog = "Enemy defeated! Gained 74 EXP and \$120."
+        } else {
+          enemyHp = newEnemyHp
+          dialog = "Direct hit! Enemy HP down to $newEnemyHp."
+        }
+      }
+
       state.copy(
         playerX = newX,
         playerY = newY,
@@ -248,37 +356,86 @@ class VirtualConsoleEngine(
         enemyName = enemy,
         enemyHp = enemyHp,
         enemyMaxHp = enemyMaxHp,
-        dialogText = dialog,
-        lastInputKey = key.name,
-        inputBufferHex = inputHex
+        dialogText = dialog
       )
     }
 
-    // Update RAM
-    pokeMemory("0x02024284", String.format("0x%04X", _gameState.value.playerX))
-    pokeMemory("0x02024286", String.format("0x%04X", _gameState.value.playerY))
-    pokeMemory("0x03004020", inputHex)
+    // Reflect player coordinates in live emulated RAM
+    rawMemoryWrite("0x02024284", _gameState.value.playerX)
+    rawMemoryWrite("0x02024286", _gameState.value.playerY)
   }
 
-  fun pokeMemory(addressHex: String, valueHex: String) {
+  // --------------------------------------------------------------------------
+  // UNIFIED MEMORY GATEKEEPER & CHEATS
+  // --------------------------------------------------------------------------
+
+  fun readMemory(addressHex: String): Int {
+    return _memoryMap.value[addressHex] ?: 0
+  }
+
+  /**
+   * Safe Memory Poke with Strict Permission Check
+   */
+  fun pokeMemory(addressHex: String, valueHex: String, allowCheats: Boolean): Result<Unit> {
+    if (!allowCheats) {
+      return Result.failure(SecurityException("Memory write blocked: 'Memory Cheats Allowed' is disabled in AI Settings."))
+    }
     val cleanVal = valueHex.removePrefix("0x").toIntOrNull(16) ?: 0
+    rawMemoryWrite(addressHex, cleanVal)
+
+    // Sync state properties if primary registers are modified
+    when (addressHex) {
+      "0x0202402C" -> _gameState.update { it.copy(playerHp = cleanVal.coerceIn(0, it.playerMaxHp)) }
+      "0x02024090" -> _gameState.update { it.copy(coins = cleanVal) }
+      "0x02024284" -> _gameState.update { it.copy(playerX = cleanVal.coerceIn(4, 36)) }
+      "0x02024286" -> _gameState.update { it.copy(playerY = cleanVal.coerceIn(4, 36)) }
+    }
+    return Result.success(Unit)
+  }
+
+  private fun rawMemoryWrite(addressHex: String, decimalVal: Int) {
+    if (frozenAddresses.contains(addressHex)) return
     _memoryMap.update { current ->
-      current.toMutableMap().apply {
-        put(addressHex, cleanVal)
-      }
+      current.toMutableMap().apply { put(addressHex, decimalVal) }
     }
   }
 
-  fun toggleCheat(cheatId: String) {
+  fun toggleCheat(cheatId: String, allowCheats: Boolean): Result<Boolean> {
+    if (!allowCheats) {
+      return Result.failure(SecurityException("Cheat activation rejected: 'Memory Cheats Allowed' is disabled in AI Settings."))
+    }
+    var newState = false
     _cheats.update { list ->
       list.map { c ->
         if (c.id == cheatId) {
-          val newState = !c.isEnabled
+          newState = !c.isEnabled
           if (newState) {
-            pokeMemory(c.addressHex, c.activeValueHex)
+            rawMemoryWrite(c.addressHex, c.activeValueHex.removePrefix("0x").toIntOrNull(16) ?: 0)
           }
           c.copy(isEnabled = newState)
         } else c
+      }
+    }
+    return Result.success(newState)
+  }
+
+  private fun applyActiveCheats() {
+    val enabledCheats = _cheats.value.filter { it.isEnabled }
+    for (cheat in enabledCheats) {
+      when (cheat.id) {
+        "c1" -> { // God Mode
+          _gameState.update { it.copy(playerHp = it.playerMaxHp) }
+          rawMemoryWrite("0x0202402C", _gameState.value.playerMaxHp)
+        }
+        "c3" -> { // Max Money
+          _gameState.update { it.copy(coins = 999999) }
+          rawMemoryWrite("0x02024090", 999999)
+        }
+        "c4" -> { // One Hit KO
+          if (_gameState.value.isInBattle && _gameState.value.enemyHp > 1) {
+            _gameState.update { it.copy(enemyHp = 1) }
+          }
+        }
       }
     }
   }
@@ -302,17 +459,16 @@ class VirtualConsoleEngine(
         "0x02024090" to current.coins,
         "0x02024036" to current.playerLevel,
         "0x020386E0" to if (current.isInBattle) 1 else 0,
-        "0x03004020" to 0x0000
+        "0x03004020" to 0x03FF
       )
     }
   }
 
   private fun generateVisionDetections(state: GameStateSnapshot): List<VisionDetection> {
     val list = mutableListOf<VisionDetection>()
-
-    // Player bounding box (normalized on screen)
     val normPxX = (state.playerX / 40.0f).coerceIn(0.1f, 0.85f)
     val normPxY = (state.playerY / 40.0f).coerceIn(0.15f, 0.75f)
+
     list.add(
       VisionDetection(
         id = "det_player",
@@ -323,11 +479,10 @@ class VirtualConsoleEngine(
         widthNorm = 0.14f,
         heightNorm = 0.18f,
         confidence = 0.992f,
-        extraInfo = "Facing South | HP: ${state.playerHp}/${state.playerMaxHp}"
+        extraInfo = "HP: ${state.playerHp}/${state.playerMaxHp} | Coins: \$${state.coins}"
       )
     )
 
-    // NPC / Enemy bounding box
     if (state.isInBattle && state.enemyName != null) {
       list.add(
         VisionDetection(
@@ -339,67 +494,49 @@ class VirtualConsoleEngine(
           widthNorm = 0.28f,
           heightNorm = 0.32f,
           confidence = 0.985f,
-          extraInfo = "Battle Active"
+          extraInfo = "Battle Target"
         )
       )
-      // HP Gauge detection
       list.add(
         VisionDetection(
           id = "det_hp_bar",
-          label = "HP Bar [${((state.enemyHp.toFloat() / state.enemyMaxHp) * 100).toInt()}%]",
+          label = "HP Gauge [${if (state.enemyMaxHp > 0) ((state.enemyHp.toFloat() / state.enemyMaxHp) * 100).toInt() else 0}%]",
           category = VisionCategory.HP_BAR,
           xNorm = 0.58f,
           yNorm = 0.12f,
           widthNorm = 0.35f,
-          heightNorm = 0.05f,
-          confidence = 0.995f,
-          extraInfo = "Value: ${state.enemyHp}"
+          heightNorm = 0.06f,
+          confidence = 0.978f
         )
       )
     } else {
-      // NPC in town
       list.add(
         VisionDetection(
-          id = "det_npc_1",
-          label = "Prof. Birch / Town NPC",
+          id = "det_npc",
+          label = "Professor Oak / Birch (NPC)",
           category = VisionCategory.NPC,
-          xNorm = 0.70f,
-          yNorm = 0.45f,
+          xNorm = 0.72f,
+          yNorm = 0.38f,
           widthNorm = 0.12f,
           heightNorm = 0.16f,
-          confidence = 0.967f,
-          extraInfo = "Quest Giver"
-        )
-      )
-      // Next Path Waypoint
-      list.add(
-        VisionDetection(
-          id = "det_waypoint",
-          label = "Next Waypoint: Route 101 North",
-          category = VisionCategory.WAYPOINT,
-          xNorm = 0.48f,
-          yNorm = 0.10f,
-          widthNorm = 0.16f,
-          heightNorm = 0.08f,
-          confidence = 0.941f,
-          extraInfo = "Optimal Path"
+          confidence = 0.965f,
+          extraInfo = "Dialogue Source"
         )
       )
     }
 
-    // Text Dialogue Box
     if (state.dialogText.isNotBlank()) {
       list.add(
         VisionDetection(
           id = "det_dialog",
-          label = "OCR Text: \"${state.dialogText.take(24)}...\"",
+          label = "OCR Text Box [${state.dialogText.take(20)}...]",
           category = VisionCategory.DIALOG,
-          xNorm = 0.08f,
-          yNorm = 0.72f,
-          widthNorm = 0.84f,
-          heightNorm = 0.22f,
-          confidence = 0.989f,
-          extraInfo = "Text Dialog Box"
+          xNorm = 0.05f,
+          yNorm = 0.62f,
+          widthNorm = 0.90f,
+          heightNorm = 0.32f,
+          confidence = 0.994f,
+          extraInfo = "Active Prompt"
         )
       )
     }
@@ -410,14 +547,14 @@ class VirtualConsoleEngine(
   private fun generateMemoryWatchList(state: GameStateSnapshot): List<MemoryWatchEntry> {
     val map = _memoryMap.value
     return listOf(
-      MemoryWatchEntry("0x02024284", "Player_X_Pos", String.format("0x%04X", state.playerX), state.playerX, frozenAddresses.contains("0x02024284"), "Tile coordinate X"),
-      MemoryWatchEntry("0x02024286", "Player_Y_Pos", String.format("0x%04X", state.playerY), state.playerY, frozenAddresses.contains("0x02024286"), "Tile coordinate Y"),
-      MemoryWatchEntry("0x0202402C", "Player_HP", String.format("0x%04X", state.playerHp), state.playerHp, frozenAddresses.contains("0x0202402C"), "Current active hit points"),
-      MemoryWatchEntry("0x0202402E", "Player_Max_HP", String.format("0x%04X", state.playerMaxHp), state.playerMaxHp, frozenAddresses.contains("0x0202402E"), "Max allowable hit points"),
-      MemoryWatchEntry("0x02024090", "Money_Coins", String.format("0x%08X", state.coins), state.coins, frozenAddresses.contains("0x02024090"), "Pocket funds"),
-      MemoryWatchEntry("0x02024036", "Level_Lead", String.format("0x%02X", state.playerLevel), state.playerLevel, frozenAddresses.contains("0x02024036"), "Lead party member level"),
-      MemoryWatchEntry("0x020386E0", "Battle_State_Flag", String.format("0x%02X", if (state.isInBattle) 1 else 0), if (state.isInBattle) 1 else 0, false, "0=Overworld, 1=Combat"),
-      MemoryWatchEntry("0x03004020", "Key_Input_Buffer", state.inputBufferHex, map["0x03004020"] ?: 0, false, "Direct DMA controller latch")
+      MemoryWatchEntry("0x02024284", "PLAYER_X", String.format("0x%04X", map["0x02024284"] ?: state.playerX), map["0x02024284"] ?: state.playerX, frozenAddresses.contains("0x02024284"), "Horizontal tile map coordinate"),
+      MemoryWatchEntry("0x02024286", "PLAYER_Y", String.format("0x%04X", map["0x02024286"] ?: state.playerY), map["0x02024286"] ?: state.playerY, frozenAddresses.contains("0x02024286"), "Vertical tile map coordinate"),
+      MemoryWatchEntry("0x0202402C", "PLAYER_HP", String.format("0x%04X", map["0x0202402C"] ?: state.playerHp), map["0x0202402C"] ?: state.playerHp, frozenAddresses.contains("0x0202402C"), "Current party leader Hit Points"),
+      MemoryWatchEntry("0x0202402E", "PLAYER_MAX_HP", String.format("0x%04X", map["0x0202402E"] ?: state.playerMaxHp), map["0x0202402E"] ?: state.playerMaxHp, frozenAddresses.contains("0x0202402E"), "Max base HP capacity"),
+      MemoryWatchEntry("0x02024090", "MONEY_POCKET", String.format("0x%08X", map["0x02024090"] ?: state.coins), map["0x02024090"] ?: state.coins, frozenAddresses.contains("0x02024090"), "Current wallet money counter"),
+      MemoryWatchEntry("0x02024036", "POKEMON_LEVEL", String.format("0x%02X", map["0x02024036"] ?: state.playerLevel), map["0x02024036"] ?: state.playerLevel, frozenAddresses.contains("0x02024036"), "Starter creature level"),
+      MemoryWatchEntry("0x020386E0", "BATTLE_FLAG", String.format("0x%02X", map["0x020386E0"] ?: if (state.isInBattle) 1 else 0), map["0x020386E0"] ?: if (state.isInBattle) 1 else 0, frozenAddresses.contains("0x020386E0"), "0 = Overworld, 1 = Battle screen"),
+      MemoryWatchEntry("0x03004020", "KEYINPUT_REG", computeKeyInputBufferHex(_activeKeys.value), map["0x03004020"] ?: 0x03FF, false, "Live DMA 10-bit active-low button register")
     )
   }
 }

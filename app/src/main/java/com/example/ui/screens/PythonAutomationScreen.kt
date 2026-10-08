@@ -64,12 +64,20 @@ import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 
+import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.AnnotatedString
+import java.io.File
+
 @Composable
 fun PythonAutomationScreen(
   viewModel: MainViewModel,
   modifier: Modifier = Modifier
 ) {
+  val context = LocalContext.current
+  val clipboardManager = LocalClipboardManager.current
   val scripts by viewModel.pythonEngine.scripts.collectAsState()
+  val executionStatus by viewModel.pythonEngine.executionStatus.collectAsState()
   val terminalOutput by viewModel.pythonEngine.terminalOutput.collectAsState()
   val telemetry by viewModel.aiHarness.telemetry.collectAsState()
   val dataset by viewModel.aiHarness.dataset.collectAsState()
@@ -135,6 +143,52 @@ fun PythonAutomationScreen(
         }
       }
       Spacer(modifier = Modifier.height(12.dp))
+    }
+
+    // Verified Python Interpreter Lifecycle Status Banner
+    item {
+      Card(
+        modifier = Modifier.fillMaxWidth().padding(bottom = 10.dp),
+        colors = CardDefaults.cardColors(containerColor = Color(0xFF070E20)),
+        shape = RoundedCornerShape(8.dp)
+      ) {
+        Row(
+          modifier = Modifier.fillMaxWidth().padding(10.dp),
+          verticalAlignment = Alignment.CenterVertically
+        ) {
+          Box(
+            modifier = Modifier
+              .clip(RoundedCornerShape(4.dp))
+              .background(Color(executionStatus.state.badgeColorHex))
+              .padding(horizontal = 6.dp, vertical = 2.dp)
+          ) {
+            Text(
+              text = executionStatus.state.label,
+              color = Color.White,
+              fontSize = 8.5.sp,
+              fontWeight = FontWeight.Bold,
+              fontFamily = FontFamily.Monospace
+            )
+          }
+          Spacer(modifier = Modifier.width(8.dp))
+          Column(modifier = Modifier.weight(1f)) {
+            Text(
+              text = executionStatus.message,
+              color = TextPrimary,
+              fontSize = 11.sp,
+              fontWeight = FontWeight.Bold
+            )
+            executionStatus.detail?.let {
+              Text(
+                text = it,
+                color = TextSecondary,
+                fontSize = 9.5.sp,
+                fontFamily = FontFamily.Monospace
+              )
+            }
+          }
+        }
+      }
     }
 
     // Python Scripts Section
@@ -495,9 +549,12 @@ fun PythonAutomationScreen(
 
   // Export JSONL Dialog
   if (showExportDialog) {
+    var savedFile by remember { mutableStateOf<File?>(null) }
+    var fileExportMessage by remember { mutableStateOf<String?>(null) }
+
     AlertDialog(
       onDismissRequest = { showExportDialog = false },
-      title = { Text("Exported JSONL Dataset", color = TextPrimary) },
+      title = { Text("Export Dataset to Storage", color = TextPrimary) },
       text = {
         Column {
           Text(
@@ -509,29 +566,65 @@ fun PythonAutomationScreen(
           Box(
             modifier = Modifier
               .fillMaxWidth()
-              .height(200.dp)
+              .height(140.dp)
               .background(Color(0xFF050811), RoundedCornerShape(6.dp))
               .padding(8.dp)
           ) {
             Text(
-              text = exportedJsonl.ifBlank { "Dataset is empty." },
+              text = exportedJsonl.ifBlank { "Dataset is empty. Play or move to log samples." },
               color = EmeraldRam,
               fontSize = 9.sp,
               fontFamily = FontFamily.Monospace,
               lineHeight = 12.sp
             )
           }
+
+          Spacer(modifier = Modifier.height(8.dp))
+
+          // Save File Button
+          Button(
+            onClick = {
+              val f = viewModel.exportDatasetFile(context)
+              savedFile = f
+              fileExportMessage = "Saved: ${f.name} (${f.length()} bytes)\nPath: ${f.absolutePath}"
+            },
+            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF1E3A8A)),
+            modifier = Modifier.fillMaxWidth().testTag("btn_save_dataset_file")
+          ) {
+            Icon(Icons.Default.Download, contentDescription = null, tint = NeonCyan, modifier = Modifier.size(16.dp))
+            Spacer(modifier = Modifier.width(6.dp))
+            Text("Save File to App Storage", color = NeonCyan, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+          }
+
+          fileExportMessage?.let { msg ->
+            Spacer(modifier = Modifier.height(6.dp))
+            Text(
+              text = msg,
+              color = EmeraldRam,
+              fontSize = 9.sp,
+              fontFamily = FontFamily.Monospace
+            )
+          }
         }
       },
       confirmButton = {
-        Button(
-          onClick = {
-            viewModel.aiHarness.recordThought("Exported ${dataset.size} training records to dataset buffer.")
-            showExportDialog = false
-          },
-          colors = ButtonDefaults.buttonColors(containerColor = NeonCyan)
-        ) {
-          Text("Done", color = Color.Black, fontWeight = FontWeight.Bold)
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+          Button(
+            onClick = {
+              clipboardManager.setText(AnnotatedString(exportedJsonl))
+              viewModel.aiHarness.recordThought("Copied ${dataset.size} JSONL records to clipboard.")
+            },
+            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF334155))
+          ) {
+            Text("Copy JSONL", color = Color.White, fontSize = 11.sp)
+          }
+
+          Button(
+            onClick = { showExportDialog = false },
+            colors = ButtonDefaults.buttonColors(containerColor = NeonCyan)
+          ) {
+            Text("Done", color = Color.Black, fontWeight = FontWeight.Bold, fontSize = 11.sp)
+          }
         }
       }
     )

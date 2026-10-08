@@ -323,6 +323,56 @@ fun EdgePilotMenuOverlay(
                 ) {
                   Column(modifier = Modifier.padding(12.dp)) {
                     Text(
+                      text = "VIRTUAL CONSOLE HARDWARE CHASSIS",
+                      color = NeonCyan,
+                      fontSize = 11.sp,
+                      fontWeight = FontWeight.Bold,
+                      fontFamily = FontFamily.Monospace
+                    )
+                    Spacer(modifier = Modifier.height(6.dp))
+
+                    Row(
+                      modifier = Modifier.fillMaxWidth(),
+                      horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                      com.example.model.GameConsoleMode.entries.forEach { mode ->
+                        val isCurrentMode = gameState.consoleMode == mode
+                        Box(
+                          modifier = Modifier
+                            .weight(1f)
+                            .clip(RoundedCornerShape(8.dp))
+                            .background(if (isCurrentMode) Color(0xFF1E3A8A) else Color(0xFF0F172A))
+                            .border(
+                              width = if (isCurrentMode) 1.5.dp else 0.5.dp,
+                              color = if (isCurrentMode) NeonCyan else Color(0xFF334155),
+                              shape = RoundedCornerShape(8.dp)
+                            )
+                            .clickable { viewModel.switchConsoleMode(mode) }
+                            .padding(vertical = 8.dp, horizontal = 4.dp),
+                          contentAlignment = Alignment.Center
+                        ) {
+                          Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                            Text(
+                              text = mode.displayName,
+                              color = if (isCurrentMode) Color.White else TextMuted,
+                              fontSize = 10.sp,
+                              fontWeight = if (isCurrentMode) FontWeight.Bold else FontWeight.Normal,
+                              fontFamily = FontFamily.SansSerif
+                            )
+                            Text(
+                              text = mode.screenAspect,
+                              color = if (isCurrentMode) EmeraldRam else TextMuted,
+                              fontSize = 8.sp,
+                              fontFamily = FontFamily.Monospace
+                            )
+                          }
+                        }
+                      }
+                    }
+
+                    Spacer(modifier = Modifier.height(14.dp))
+
+                    Text(
                       text = "QUICK ROM CARTRIDGE SWAP",
                       color = NeonCyan,
                       fontSize = 11.sp,

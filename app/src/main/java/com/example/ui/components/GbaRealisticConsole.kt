@@ -12,16 +12,14 @@ import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
-import androidx.compose.foundation.clickable
-import androidx.compose.foundation.interaction.MutableInteractionSource
-import androidx.compose.foundation.interaction.collectIsPressedAsState
+import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.gestures.waitForUpOrCancellation
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -35,7 +33,9 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -44,14 +44,15 @@ import androidx.compose.ui.draw.scale
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import com.example.model.GameStateSnapshot
 import com.example.model.GamepadKey
+import com.example.model.GameStateSnapshot
 
 // Cobalt Metallic Blue Palette exactly matching the physical GBA SP photo
 private val CobaltShellOuter = Color(0xFF142B66)
@@ -59,27 +60,28 @@ private val CobaltShellMain = Color(0xFF1A3B8B)
 private val CobaltShellBright = Color(0xFF244CA9)
 private val CobaltShellHighlight = Color(0xFF3362C9)
 private val CobaltDeepWell = Color(0xFF0C1B3F)
-private val ScrewCapRubber = Color(0xFF1E293B)
 private val DpadCharcoal = Color(0xFF29303D)
 private val ButtonCharcoal = Color(0xFF232936)
 private val SilkscreenSilver = Color(0xFFCBD5E1)
 private val LedActiveGreen = Color(0xFF22C55E)
 
+/**
+ * Authentic Cobalt Blue Game Boy Advance SP Handheld Console.
+ * Backed by a true input contract (KeyDown, KeyUp, simultaneous multi-touch, held states,
+ * cancellation) and visible ownership tracking.
+ */
 @Composable
 fun GbaRealisticConsole(
   gameState: GameStateSnapshot,
   showVisionOverlay: Boolean,
-  onKeyPress: (GamepadKey) -> Unit,
+  onKeyDown: (GamepadKey) -> Unit,
+  onKeyUp: (GamepadKey) -> Unit,
   onMenuPress: () -> Unit,
   modifier: Modifier = Modifier
 ) {
   val context = LocalContext.current
   val vibrator = remember {
-    try {
-      context.getSystemService(Vibrator::class.java)
-    } catch (_: Exception) {
-      null
-    }
+    try { context.getSystemService(Vibrator::class.java) } catch (_: Exception) { null }
   }
 
   fun triggerHaptic(duration: Long = 10) {
@@ -105,7 +107,6 @@ fun GbaRealisticConsole(
         .padding(horizontal = 8.dp, vertical = 6.dp),
       contentAlignment = Alignment.Center
     ) {
-      // Responsive handheld containment: maintains authentic clamshell vertical proportions
       Column(
         modifier = Modifier
           .widthIn(max = 410.dp)
@@ -124,14 +125,8 @@ fun GbaRealisticConsole(
 
         // 2. CYLINDRICAL HINGE WITH L AND R SHOULDERS
         CylindricalHingeBar(
-          onLPress = {
-            triggerHaptic(14)
-            onKeyPress(GamepadKey.L)
-          },
-          onRPress = {
-            triggerHaptic(14)
-            onKeyPress(GamepadKey.R)
-          },
+          onKeyDown = { key -> triggerHaptic(14); onKeyDown(key) },
+          onKeyUp = { key -> onKeyUp(key) },
           modifier = Modifier
             .fillMaxWidth()
             .height(30.dp)
@@ -139,14 +134,9 @@ fun GbaRealisticConsole(
 
         // 3. LOWER CONTROLLER UNIT (BODY)
         LowerControllerBodyUnit(
-          onKeyPress = { key ->
-            triggerHaptic(10)
-            onKeyPress(key)
-          },
-          onMenuPress = {
-            triggerHaptic(22)
-            onMenuPress()
-          },
+          onKeyDown = { key -> triggerHaptic(10); onKeyDown(key) },
+          onKeyUp = { key -> onKeyUp(key) },
+          onMenuPress = { triggerHaptic(22); onMenuPress() },
           modifier = Modifier
             .fillMaxWidth()
             .weight(1.18f)
@@ -157,7 +147,7 @@ fun GbaRealisticConsole(
 }
 
 /**
- * Top Clamshell Screen Unit: Nintendo logo, screen with black bezel, GAME BOY ADVANCE SP logo, screw rubber covers
+ * Top Clamshell Screen Unit: Nintendo logo, ownership badge, screen with black bezel, GBA SP logo
  */
 @Composable
 private fun TopLidScreenUnit(
@@ -193,8 +183,30 @@ private fun TopLidScreenUnit(
       horizontalAlignment = Alignment.CenterHorizontally,
       verticalArrangement = Arrangement.SpaceBetween
     ) {
-      // Nintendo oval badge
-      NintendoBadge()
+      // Header: Nintendo badge + Visible Input Ownership Badge
+      Row(
+        modifier = Modifier.fillMaxWidth().padding(horizontal = 4.dp),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically
+      ) {
+        NintendoBadge()
+
+        // Visible Control Ownership HUD: [HUMAN MANUAL] / [AI ACTIVE] / [PAUSED]
+        Box(
+          modifier = Modifier
+            .clip(RoundedCornerShape(4.dp))
+            .background(Color(gameState.inputOwner.badgeColorHex))
+            .padding(horizontal = 6.dp, vertical = 2.dp)
+        ) {
+          Text(
+            text = gameState.inputOwner.label,
+            color = Color.White,
+            fontSize = 7.5.sp,
+            fontWeight = FontWeight.Bold,
+            fontFamily = FontFamily.Monospace
+          )
+        }
+      }
 
       Spacer(modifier = Modifier.height(2.dp))
 
@@ -225,12 +237,12 @@ private fun TopLidScreenUnit(
 }
 
 /**
- * Cylindrical Hinge Bar connecting top lid and bottom body with L & R triggers
+ * Cylindrical Hinge Bar connecting top lid and bottom body with holdable L & R triggers
  */
 @Composable
 private fun CylindricalHingeBar(
-  onLPress: () -> Unit,
-  onRPress: () -> Unit,
+  onKeyDown: (GamepadKey) -> Unit,
+  onKeyUp: (GamepadKey) -> Unit,
   modifier: Modifier = Modifier
 ) {
   Row(
@@ -245,53 +257,31 @@ private fun CylindricalHingeBar(
     verticalAlignment = Alignment.CenterVertically,
     horizontalArrangement = Arrangement.SpaceBetween
   ) {
-    // Left shoulder trigger L
-    ShoulderTriggerKey(
-      label = "L",
-      onClick = onLPress,
-      isLeft = true,
-      testTag = "btn_trigger_l"
-    )
+    HoldableGbaShoulderTrigger(label = "L", key = GamepadKey.L, onKeyDown = onKeyDown, onKeyUp = onKeyUp, isLeft = true)
 
     // Center hinge seams (3-barrel look)
     Row(
       modifier = Modifier.weight(1f),
       horizontalArrangement = Arrangement.Center
     ) {
-      Box(
-        modifier = Modifier
-          .width(2.5.dp)
-          .fillMaxHeight()
-          .background(Color(0xFF070B14))
-      )
+      Box(modifier = Modifier.width(2.5.dp).fillMaxHeight().background(Color(0xFF070B14)))
       Spacer(modifier = Modifier.width(42.dp))
-      Box(
-        modifier = Modifier
-          .width(2.5.dp)
-          .fillMaxHeight()
-          .background(Color(0xFF070B14))
-      )
+      Box(modifier = Modifier.width(2.5.dp).fillMaxHeight().background(Color(0xFF070B14)))
     }
 
-    // Right shoulder trigger R
-    ShoulderTriggerKey(
-      label = "R",
-      onClick = onRPress,
-      isLeft = false,
-      testTag = "btn_trigger_r"
-    )
+    HoldableGbaShoulderTrigger(label = "R", key = GamepadKey.R, onKeyDown = onKeyDown, onKeyUp = onKeyUp, isLeft = false)
   }
 }
 
 @Composable
-private fun ShoulderTriggerKey(
+private fun HoldableGbaShoulderTrigger(
   label: String,
-  onClick: () -> Unit,
-  isLeft: Boolean,
-  testTag: String
+  key: GamepadKey,
+  onKeyDown: (GamepadKey) -> Unit,
+  onKeyUp: (GamepadKey) -> Unit,
+  isLeft: Boolean
 ) {
-  val interactionSource = remember { MutableInteractionSource() }
-  val isPressed by interactionSource.collectIsPressedAsState()
+  var isPressed by remember { mutableStateOf(false) }
   val scale by animateFloatAsState(if (isPressed) 0.94f else 1f, label = "trigger_scale")
 
   Box(
@@ -308,12 +298,19 @@ private fun ShoulderTriggerKey(
             listOf(Color(0xFF334155), Color(0xFF1E293B))
         )
       )
-      .clickable(
-        interactionSource = interactionSource,
-        indication = null,
-        onClick = onClick
-      )
-      .testTag(testTag),
+      .pointerInput(key) {
+        awaitPointerEventScope {
+          while (true) {
+            awaitFirstDown(requireUnconsumed = false)
+            isPressed = true
+            onKeyDown(key)
+            waitForUpOrCancellation()
+            isPressed = false
+            onKeyUp(key)
+          }
+        }
+      }
+      .testTag("btn_trigger_${key.name.lowercase()}"),
     contentAlignment = Alignment.Center
   ) {
     Text(
@@ -331,7 +328,8 @@ private fun ShoulderTriggerKey(
  */
 @Composable
 private fun LowerControllerBodyUnit(
-  onKeyPress: (GamepadKey) -> Unit,
+  onKeyDown: (GamepadKey) -> Unit,
+  onKeyUp: (GamepadKey) -> Unit,
   onMenuPress: () -> Unit,
   modifier: Modifier = Modifier
 ) {
@@ -352,7 +350,6 @@ private fun LowerControllerBodyUnit(
       )
       .padding(horizontal = 14.dp, vertical = 6.dp)
   ) {
-    // Bottom corner screws
     CornerScrewCover(modifier = Modifier.align(Alignment.BottomStart).padding(3.dp))
     CornerScrewCover(modifier = Modifier.align(Alignment.BottomEnd).padding(3.dp))
 
@@ -367,14 +364,12 @@ private fun LowerControllerBodyUnit(
           .fillMaxWidth()
           .height(34.dp)
       ) {
-        // Glowing Power LED on the top-right corner
         BatteryStatusLed(
           modifier = Modifier
             .align(Alignment.CenterEnd)
             .padding(end = 6.dp)
         )
 
-        // Center circular MENU Button with metallic outer ring
         MenuButtonWithLabel(
           onClick = onMenuPress,
           modifier = Modifier.align(Alignment.Center)
@@ -402,7 +397,7 @@ private fun LowerControllerBodyUnit(
             .border(1.5.dp, Color(0xFF11234F), CircleShape),
           contentAlignment = Alignment.Center
         ) {
-          AuthenticDpadCross(onPress = onKeyPress)
+          AuthenticHoldableDpadCross(onKeyDown = onKeyDown, onKeyUp = onKeyUp)
         }
 
         // Center: 3x4 Speaker Grille Holes
@@ -429,21 +424,8 @@ private fun LowerControllerBodyUnit(
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically
           ) {
-            // Button B (left-lower)
-            AuthenticRoundButton(
-              label = "B",
-              onClick = { onKeyPress(GamepadKey.B) },
-              testTag = "btn_action_b",
-              rotation = 28f
-            )
-
-            // Button A (right-upper)
-            AuthenticRoundButton(
-              label = "A",
-              onClick = { onKeyPress(GamepadKey.A) },
-              testTag = "btn_action_a",
-              rotation = 28f
-            )
+            HoldableRoundButtonGba("B", GamepadKey.B, onKeyDown, onKeyUp, rotation = 28f)
+            HoldableRoundButtonGba("A", GamepadKey.A, onKeyDown, onKeyUp, rotation = 28f)
           }
         }
       }
@@ -456,44 +438,18 @@ private fun LowerControllerBodyUnit(
         horizontalArrangement = Arrangement.Center,
         verticalAlignment = Alignment.CenterVertically
       ) {
-        // SELECT button
-        Column(
-          horizontalAlignment = Alignment.CenterHorizontally
-        ) {
-          Text(
-            text = "SELECT",
-            color = SilkscreenSilver,
-            fontSize = 8.sp,
-            fontWeight = FontWeight.Bold,
-            fontFamily = FontFamily.SansSerif,
-            letterSpacing = 0.5.sp
-          )
+        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+          Text("SELECT", color = SilkscreenSilver, fontSize = 8.sp, fontWeight = FontWeight.Bold, fontFamily = FontFamily.SansSerif)
           Spacer(modifier = Modifier.height(2.dp))
-          AuthenticOvalButton(
-            onClick = { onKeyPress(GamepadKey.SELECT) },
-            testTag = "btn_select"
-          )
+          HoldableOvalButtonGba(GamepadKey.SELECT, onKeyDown, onKeyUp)
         }
 
         Spacer(modifier = Modifier.width(42.dp))
 
-        // START button
-        Column(
-          horizontalAlignment = Alignment.CenterHorizontally
-        ) {
-          Text(
-            text = "START",
-            color = SilkscreenSilver,
-            fontSize = 8.sp,
-            fontWeight = FontWeight.Bold,
-            fontFamily = FontFamily.SansSerif,
-            letterSpacing = 0.5.sp
-          )
+        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+          Text("START", color = SilkscreenSilver, fontSize = 8.sp, fontWeight = FontWeight.Bold, fontFamily = FontFamily.SansSerif)
           Spacer(modifier = Modifier.height(2.dp))
-          AuthenticOvalButton(
-            onClick = { onKeyPress(GamepadKey.START) },
-            testTag = "btn_start"
-          )
+          HoldableOvalButtonGba(GamepadKey.START, onKeyDown, onKeyUp)
         }
       }
     }
@@ -501,11 +457,12 @@ private fun LowerControllerBodyUnit(
 }
 
 /**
- * Authentic D-Pad cross with embossed directional triangles & 3D bevels
+ * Authentic D-Pad cross supporting simultaneous diagonal key combinations and held states
  */
 @Composable
-private fun AuthenticDpadCross(
-  onPress: (GamepadKey) -> Unit
+private fun AuthenticHoldableDpadCross(
+  onKeyDown: (GamepadKey) -> Unit,
+  onKeyUp: (GamepadKey) -> Unit
 ) {
   val armWidth = 38.dp
   val totalSpan = 108.dp
@@ -557,54 +514,41 @@ private fun AuthenticDpadCross(
         .border(0.5.dp, Color(0xFF0A0E17), CircleShape)
     )
 
-    // 4 Directional Touch Keys with embossed arrows
-    DpadDirectionTouchKey(
-      modifier = Modifier.align(Alignment.TopCenter).size(armWidth),
-      symbol = "▲",
-      onClick = { onPress(GamepadKey.UP) },
-      testTag = "btn_dpad_up"
-    )
-    DpadDirectionTouchKey(
-      modifier = Modifier.align(Alignment.BottomCenter).size(armWidth),
-      symbol = "▼",
-      onClick = { onPress(GamepadKey.DOWN) },
-      testTag = "btn_dpad_down"
-    )
-    DpadDirectionTouchKey(
-      modifier = Modifier.align(Alignment.CenterStart).size(armWidth),
-      symbol = "◀",
-      onClick = { onPress(GamepadKey.LEFT) },
-      testTag = "btn_dpad_left"
-    )
-    DpadDirectionTouchKey(
-      modifier = Modifier.align(Alignment.CenterEnd).size(armWidth),
-      symbol = "▶",
-      onClick = { onPress(GamepadKey.RIGHT) },
-      testTag = "btn_dpad_right"
-    )
+    // 4 Directional Touch Keys
+    HoldableDpadKeyGba(Modifier.align(Alignment.TopCenter).size(armWidth), "▲", GamepadKey.UP, onKeyDown, onKeyUp)
+    HoldableDpadKeyGba(Modifier.align(Alignment.BottomCenter).size(armWidth), "▼", GamepadKey.DOWN, onKeyDown, onKeyUp)
+    HoldableDpadKeyGba(Modifier.align(Alignment.CenterStart).size(armWidth), "◀", GamepadKey.LEFT, onKeyDown, onKeyUp)
+    HoldableDpadKeyGba(Modifier.align(Alignment.CenterEnd).size(armWidth), "▶", GamepadKey.RIGHT, onKeyDown, onKeyUp)
   }
 }
 
 @Composable
-private fun DpadDirectionTouchKey(
+private fun HoldableDpadKeyGba(
   modifier: Modifier,
   symbol: String,
-  onClick: () -> Unit,
-  testTag: String
+  key: GamepadKey,
+  onKeyDown: (GamepadKey) -> Unit,
+  onKeyUp: (GamepadKey) -> Unit
 ) {
-  val interactionSource = remember { MutableInteractionSource() }
-  val isPressed by interactionSource.collectIsPressedAsState()
+  var isPressed by remember { mutableStateOf(false) }
   val scale by animateFloatAsState(if (isPressed) 0.90f else 1f, label = "dpad_scale")
 
   Box(
     modifier = modifier
       .scale(scale)
-      .clickable(
-        interactionSource = interactionSource,
-        indication = null,
-        onClick = onClick
-      )
-      .testTag(testTag),
+      .pointerInput(key) {
+        awaitPointerEventScope {
+          while (true) {
+            awaitFirstDown(requireUnconsumed = false)
+            isPressed = true
+            onKeyDown(key)
+            waitForUpOrCancellation()
+            isPressed = false
+            onKeyUp(key)
+          }
+        }
+      }
+      .testTag("btn_dpad_${key.name.lowercase()}"),
     contentAlignment = Alignment.Center
   ) {
     Text(
@@ -616,18 +560,15 @@ private fun DpadDirectionTouchKey(
   }
 }
 
-/**
- * Authentic circular A or B action button
- */
 @Composable
-private fun AuthenticRoundButton(
+private fun HoldableRoundButtonGba(
   label: String,
-  onClick: () -> Unit,
-  testTag: String,
+  key: GamepadKey,
+  onKeyDown: (GamepadKey) -> Unit,
+  onKeyUp: (GamepadKey) -> Unit,
   rotation: Float = 0f
 ) {
-  val interactionSource = remember { MutableInteractionSource() }
-  val isPressed by interactionSource.collectIsPressedAsState()
+  var isPressed by remember { mutableStateOf(false) }
   val scale by animateFloatAsState(if (isPressed) 0.88f else 1f, label = "btn_scale")
 
   Box(
@@ -642,12 +583,19 @@ private fun AuthenticRoundButton(
         CircleShape
       )
       .border(1.2.dp, Color(0xFF4B5563), CircleShape)
-      .clickable(
-        interactionSource = interactionSource,
-        indication = null,
-        onClick = onClick
-      )
-      .testTag(testTag),
+      .pointerInput(key) {
+        awaitPointerEventScope {
+          while (true) {
+            awaitFirstDown(requireUnconsumed = false)
+            isPressed = true
+            onKeyDown(key)
+            waitForUpOrCancellation()
+            isPressed = false
+            onKeyUp(key)
+          }
+        }
+      }
+      .testTag("btn_action_${key.name.lowercase()}"),
     contentAlignment = Alignment.Center
   ) {
     Text(
@@ -661,16 +609,13 @@ private fun AuthenticRoundButton(
   }
 }
 
-/**
- * Authentic oval SELECT / START button in recessed housing
- */
 @Composable
-private fun AuthenticOvalButton(
-  onClick: () -> Unit,
-  testTag: String
+private fun HoldableOvalButtonGba(
+  key: GamepadKey,
+  onKeyDown: (GamepadKey) -> Unit,
+  onKeyUp: (GamepadKey) -> Unit
 ) {
-  val interactionSource = remember { MutableInteractionSource() }
-  val isPressed by interactionSource.collectIsPressedAsState()
+  var isPressed by remember { mutableStateOf(false) }
   val scale by animateFloatAsState(if (isPressed) 0.85f else 1f, label = "oval_scale")
 
   Box(
@@ -694,26 +639,29 @@ private fun AuthenticOvalButton(
           RoundedCornerShape(6.dp)
         )
         .border(0.5.dp, Color(0xFF475569), RoundedCornerShape(6.dp))
-        .clickable(
-          interactionSource = interactionSource,
-          indication = null,
-          onClick = onClick
-        )
-        .testTag(testTag)
+        .pointerInput(key) {
+          awaitPointerEventScope {
+            while (true) {
+              awaitFirstDown(requireUnconsumed = false)
+              isPressed = true
+              onKeyDown(key)
+              waitForUpOrCancellation()
+              isPressed = false
+              onKeyUp(key)
+            }
+          }
+        }
+        .testTag("btn_${key.name.lowercase()}")
     )
   }
 }
 
-/**
- * Center circular MENU button with metallic ring & text
- */
 @Composable
 private fun MenuButtonWithLabel(
   onClick: () -> Unit,
   modifier: Modifier = Modifier
 ) {
-  val interactionSource = remember { MutableInteractionSource() }
-  val isPressed by interactionSource.collectIsPressedAsState()
+  var isPressed by remember { mutableStateOf(false) }
   val scale by animateFloatAsState(if (isPressed) 0.88f else 1f, label = "menu_btn_scale")
 
   Column(
@@ -732,11 +680,17 @@ private fun MenuButtonWithLabel(
           CircleShape
         )
         .border(1.dp, Color(0xFF64748B), CircleShape)
-        .clickable(
-          interactionSource = interactionSource,
-          indication = null,
-          onClick = onClick
-        )
+        .pointerInput(Unit) {
+          awaitPointerEventScope {
+            while (true) {
+              awaitFirstDown(requireUnconsumed = false)
+              isPressed = true
+              onClick()
+              waitForUpOrCancellation()
+              isPressed = false
+            }
+          }
+        }
         .testTag("btn_console_menu"),
       contentAlignment = Alignment.Center
     ) {
@@ -758,9 +712,6 @@ private fun MenuButtonWithLabel(
   }
 }
 
-/**
- * Upper-right Power / Battery Status LED with glowing bloom
- */
 @Composable
 private fun BatteryStatusLed(modifier: Modifier = Modifier) {
   val infiniteTransition = rememberInfiniteTransition(label = "led_bloom")
@@ -796,9 +747,6 @@ private fun BatteryStatusLed(modifier: Modifier = Modifier) {
   }
 }
 
-/**
- * Exact 3x4 Speaker Grille Hole Pattern
- */
 @Composable
 private fun SpeakerGrilleGrid() {
   Column(
@@ -820,9 +768,6 @@ private fun SpeakerGrilleGrid() {
   }
 }
 
-/**
- * Nintendo logo badge in oval border
- */
 @Composable
 private fun NintendoBadge() {
   Box(
@@ -841,9 +786,6 @@ private fun NintendoBadge() {
   }
 }
 
-/**
- * "GAME BOY ADVANCE SP" logo below screen
- */
 @Composable
 private fun GbaAdvanceSpLogo() {
   Row(
@@ -851,49 +793,45 @@ private fun GbaAdvanceSpLogo() {
     horizontalArrangement = Arrangement.Center
   ) {
     Text(
-      text = "GAME BOY ",
-      color = Color(0xFFE2E8F0),
-      fontSize = 11.sp,
-      fontFamily = FontFamily.SansSerif,
-      fontWeight = FontWeight.Bold,
-      letterSpacing = 0.5.sp
-    )
-    Text(
-      text = "ADVANCE ",
-      color = Color(0xFFCBD5E1),
-      fontSize = 11.sp,
-      fontFamily = FontFamily.SansSerif,
+      text = "GAME BOY",
+      color = SilkscreenSilver,
+      fontSize = 11.5.sp,
       fontWeight = FontWeight.Black,
-      fontStyle = androidx.compose.ui.text.font.FontStyle.Italic,
-      letterSpacing = 0.5.sp
-    )
-    Text(
-      text = "SP",
-      color = Color(0xFFF1F5F9),
-      fontSize = 12.sp,
       fontFamily = FontFamily.SansSerif,
-      fontWeight = FontWeight.Black,
       letterSpacing = 1.sp
     )
+    Spacer(modifier = Modifier.width(6.dp))
+    Text(
+      text = "ADVANCE",
+      color = SilkscreenSilver,
+      fontSize = 10.sp,
+      fontWeight = FontWeight.Bold,
+      fontFamily = FontFamily.SansSerif,
+      letterSpacing = 1.sp
+    )
+    Spacer(modifier = Modifier.width(4.dp))
+    Box(
+      modifier = Modifier
+        .background(Color(0xFF334155), RoundedCornerShape(2.dp))
+        .padding(horizontal = 4.dp, vertical = 1.dp)
+    ) {
+      Text(
+        text = "SP",
+        color = Color(0xFF38BDF8),
+        fontSize = 9.sp,
+        fontWeight = FontWeight.Black,
+        fontFamily = FontFamily.SansSerif
+      )
+    }
   }
 }
 
-/**
- * Corner rubber screw cover
- */
 @Composable
 private fun CornerScrewCover(modifier: Modifier = Modifier) {
   Box(
     modifier = modifier
-      .size(11.dp)
-      .background(Color(0xFF0B1426), CircleShape)
-      .border(0.5.dp, Color(0xFF1E293B), CircleShape),
-    contentAlignment = Alignment.Center
-  ) {
-    Box(
-      modifier = Modifier
-        .size(7.dp)
-        .background(ScrewCapRubber, CircleShape)
-    )
-  }
+      .size(7.dp)
+      .background(Color(0xFF1E293B), CircleShape)
+      .border(0.5.dp, Color(0xFF0F172A), CircleShape)
+  )
 }

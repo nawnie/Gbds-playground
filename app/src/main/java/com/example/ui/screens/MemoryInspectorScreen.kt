@@ -190,7 +190,12 @@ fun MemoryInspectorScreen(
     items(cheats) { cheat ->
       CheatCardItem(
         cheat = cheat,
-        onToggle = { viewModel.consoleEngine.toggleCheat(cheat.id) }
+        onToggle = {
+          val res = viewModel.consoleEngine.toggleCheat(cheat.id, allowCheats = agentConfig.memoryCheatsAllowed)
+          if (res.isFailure) {
+            viewModel.aiHarness.recordThought("Cheat rejected: 'Memory Cheats Allowed' is disabled in AI Settings.")
+          }
+        }
       )
       Spacer(modifier = Modifier.height(6.dp))
     }
@@ -262,8 +267,12 @@ fun MemoryInspectorScreen(
       confirmButton = {
         Button(
           onClick = {
-            viewModel.consoleEngine.pokeMemory(pokeAddress, pokeValue)
-            viewModel.aiHarness.recordThought("Manual RAM poke executed at $pokeAddress with value $pokeValue.")
+            val res = viewModel.consoleEngine.pokeMemory(pokeAddress, pokeValue, allowCheats = agentConfig.memoryCheatsAllowed)
+            if (res.isSuccess) {
+              viewModel.aiHarness.recordThought("Manual RAM poke executed at $pokeAddress with value $pokeValue.")
+            } else {
+              viewModel.aiHarness.recordThought("Poke blocked: 'Memory Cheats Allowed' is disabled in AI Settings.")
+            }
             showPokeDialog = false
           },
           colors = ButtonDefaults.buttonColors(containerColor = EmeraldRam)

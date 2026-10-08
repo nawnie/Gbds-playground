@@ -250,6 +250,8 @@ fun AiConfigDashboardScreen(
 
     // 3. Google AI Edge Gallery Models
     item {
+      val runtimeStatus by viewModel.aiHarness.runtimeStatus.collectAsState()
+
       SectionHeader(title = "3. GOOGLE AI EDGE GALLERY MODELS")
       Text(
         text = "On-device quantized models for vision, state estimation, and action buffers.",
@@ -257,6 +259,50 @@ fun AiConfigDashboardScreen(
         fontSize = 11.sp
       )
       Spacer(modifier = Modifier.height(8.dp))
+
+      // Verified Subsystem Lifecycle Status Banner
+      Card(
+        modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp),
+        colors = CardDefaults.cardColors(containerColor = Color(0xFF070E20)),
+        shape = RoundedCornerShape(8.dp)
+      ) {
+        Row(
+          modifier = Modifier.fillMaxWidth().padding(10.dp),
+          verticalAlignment = Alignment.CenterVertically
+        ) {
+          Box(
+            modifier = Modifier
+              .clip(RoundedCornerShape(4.dp))
+              .background(Color(runtimeStatus.state.badgeColorHex))
+              .padding(horizontal = 6.dp, vertical = 2.dp)
+          ) {
+            Text(
+              text = runtimeStatus.state.label,
+              color = Color.White,
+              fontSize = 8.5.sp,
+              fontWeight = FontWeight.Bold,
+              fontFamily = FontFamily.Monospace
+            )
+          }
+          Spacer(modifier = Modifier.width(8.dp))
+          Column(modifier = Modifier.weight(1f)) {
+            Text(
+              text = runtimeStatus.message,
+              color = TextPrimary,
+              fontSize = 11.sp,
+              fontWeight = FontWeight.Bold
+            )
+            runtimeStatus.detail?.let {
+              Text(
+                text = it,
+                color = TextSecondary,
+                fontSize = 9.5.sp,
+                fontFamily = FontFamily.Monospace
+              )
+            }
+          }
+        }
+      }
 
       edgeModels.forEach { model ->
         val isSelected = model.id == config.selectedModelId
@@ -416,12 +462,12 @@ fun AiConfigDashboardScreen(
           // Toggle: Memory Cheats
           ToggleRow(
             title = "Live RAM Cheating & Memory Poking",
-            subtitle = "Allows AI to directly modify RAM offsets for fun or infinite resources",
+            subtitle = "Unified gatekeeper: When toggled OFF, ALL memory writes from Chaos Mode, Python scripts, and user pokes are strictly rejected.",
             checked = config.memoryCheatsAllowed,
             onCheckedChange = {
               viewModel.updateConfig(config.copy(memoryCheatsAllowed = it))
             },
-            badge = "LIVE RAM"
+            badge = if (config.memoryCheatsAllowed) "UNLOCKED" else "LOCKED"
           )
 
           Spacer(modifier = Modifier.height(8.dp))

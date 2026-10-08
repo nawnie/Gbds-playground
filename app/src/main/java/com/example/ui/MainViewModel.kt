@@ -1,6 +1,7 @@
 package com.example.ui
 
 import android.app.Application
+import android.content.Context
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.engine.AdbWifiBridge
@@ -18,6 +19,7 @@ import com.example.model.KnowledgeLevel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import java.io.File
 
 enum class NavigationTab(val title: String, val icon: String) {
   HARNESS("Console", "Gamepad"),
@@ -46,24 +48,32 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
   private val _isMenuOpen = MutableStateFlow(false)
   val isMenuOpen: StateFlow<Boolean> = _isMenuOpen.asStateFlow()
 
-  fun openMenu() {
-    _isMenuOpen.value = true
-  }
-
-  fun closeMenu() {
-    _isMenuOpen.value = false
-  }
-
-  fun toggleMenu() {
-    _isMenuOpen.value = !_isMenuOpen.value
-  }
-
   // Engines
   val ttsManager = TtsManager(application)
   val consoleEngine = VirtualConsoleEngine(viewModelScope)
   val aiHarness = AiAgentHarness(consoleEngine, ttsManager, viewModelScope)
   val adbBridge = AdbWifiBridge(viewModelScope)
   val pythonEngine = PythonAutomationEngine(consoleEngine, aiHarness, viewModelScope)
+
+  // --------------------------------------------------------------------------
+  // UNIFIED PAUSE & MENU CONTRACT: Gameplay pauses while menu is open
+  // --------------------------------------------------------------------------
+
+  fun openMenu() {
+    consoleEngine.setPaused(true)
+    _isMenuOpen.value = true
+  }
+
+  fun closeMenu() {
+    consoleEngine.setPaused(false)
+    _isMenuOpen.value = false
+  }
+
+  fun toggleMenu() {
+    val newOpen = !_isMenuOpen.value
+    consoleEngine.setPaused(newOpen)
+    _isMenuOpen.value = newOpen
+  }
 
   fun setTab(tab: NavigationTab) {
     _currentTab.value = tab
@@ -83,9 +93,37 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
   }
 
-  fun sendGamepadInput(key: GamepadKey) {
-    consoleEngine.sendInput(key)
+  // --------------------------------------------------------------------------
+  // INPUT CONTRACT: KeyDown, KeyUp, Simultaneous Inputs, Human Takeover
+  // --------------------------------------------------------------------------
+
+  fun onKeyDown(key: GamepadKey) {
+    consoleEngine.onKeyDown(key)
+    aiHarness.notifyHumanTakeover()
     aiHarness.recordUserGameplay(key.name)
+  }
+
+  fun onKeyUp(key: GamepadKey) {
+    consoleEngine.onKeyUp(key)
+  }
+
+  fun sendGamepadInput(key: GamepadKey) {
+    onKeyDown(key)
+    onKeyUp(key)
+  }
+
+  fun onCirclePad(dx: Float, dy: Float) {
+    consoleEngine.onCirclePad(dx, dy)
+    aiHarness.notifyHumanTakeover()
+  }
+
+  fun onTouchDown(x: Float, y: Float) {
+    consoleEngine.onTouchDown(x, y)
+    aiHarness.notifyHumanTakeover()
+  }
+
+  fun onTouchUp() {
+    consoleEngine.onTouchUp()
   }
 
   fun captureScreenshot() {
@@ -121,6 +159,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
   fun updateConfig(config: AgentBehaviorConfig) {
     aiHarness.updateConfig(config)
+  }
+
+  fun exportDatasetFile(context: Context): File {
+    return aiHarness.exportDatasetToFile(context)
   }
 
   override fun onCleared() {

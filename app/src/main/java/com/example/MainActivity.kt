@@ -11,14 +11,15 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.safeDrawingPadding
 import androidx.compose.material3.Scaffold
-import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import com.example.model.GameConsoleMode
 import com.example.ui.MainViewModel
 import com.example.ui.components.EdgePilotMenuOverlay
 import com.example.ui.components.GbaRealisticConsole
+import com.example.ui.components.Nds3dsRealisticConsole
 import com.example.ui.theme.MyApplicationTheme
 
 class MainActivity : ComponentActivity() {
@@ -50,28 +51,38 @@ class MainActivity : ComponentActivity() {
               .fillMaxSize()
               .background(Color.Black)
           ) {
-            // 1. PRIMARY UX: 1:1 PURE REALISTIC GAME BOY ADVANCE SP CONSOLE
-            // Visible exclusively until MENU is pressed
-            GbaRealisticConsole(
-              gameState = gameState,
-              showVisionOverlay = showVisionOverlay,
-              onKeyPress = { key ->
-                viewModel.sendGamepadInput(key)
-              },
-              onMenuPress = {
-                viewModel.toggleMenu()
-              },
-              modifier = Modifier.fillMaxSize()
-            )
+            // 1. PRIMARY UX: 1:1 REALISTIC CONSOLE HARDWARE CHASSIS
+            // Dynamically adapts between GBA SP and Nintendo 3DS Dual-Screen layouts!
+            // Operates with real input contract (press/release/held/simultaneous keys/touch)
+            if (gameState.consoleMode == GameConsoleMode.NDS_3DS) {
+              Nds3dsRealisticConsole(
+                gameState = gameState,
+                showVisionOverlay = showVisionOverlay,
+                onKeyDown = { key -> viewModel.onKeyDown(key) },
+                onKeyUp = { key -> viewModel.onKeyUp(key) },
+                onCirclePad = { dx, dy -> viewModel.onCirclePad(dx, dy) },
+                onTouchDown = { x, y -> viewModel.onTouchDown(x, y) },
+                onTouchUp = { viewModel.onTouchUp() },
+                onMenuPress = { viewModel.toggleMenu() },
+                modifier = Modifier.fillMaxSize()
+              )
+            } else {
+              GbaRealisticConsole(
+                gameState = gameState,
+                showVisionOverlay = showVisionOverlay,
+                onKeyDown = { key -> viewModel.onKeyDown(key) },
+                onKeyUp = { key -> viewModel.onKeyUp(key) },
+                onMenuPress = { viewModel.toggleMenu() },
+                modifier = Modifier.fillMaxSize()
+              )
+            }
 
             // 2. EDGEPILOT AI HARNESS MENU & DASHBOARD
-            // Smoothly slides in when the circular MENU button is pressed
+            // Pauses the virtual console immediately while visible!
             EdgePilotMenuOverlay(
               viewModel = viewModel,
               isVisible = isMenuOpen,
-              onDismiss = {
-                viewModel.closeMenu()
-              }
+              onDismiss = { viewModel.closeMenu() }
             )
           }
         }

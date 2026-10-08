@@ -138,6 +138,44 @@ data class GameCheat(
 )
 
 /**
+ * Ownership of the game controller
+ */
+enum class InputOwner(val label: String, val badgeColorHex: Long) {
+  HUMAN("HUMAN MANUAL", 0xFF2563EB),
+  AI_AGENT("AI ACTIVE", 0xFF9333EA),
+  PAUSED("PAUSED (MENU)", 0xFFF59E0B)
+}
+
+/**
+ * Explicit subsystem lifecycle state
+ */
+enum class SystemLifecycleState(val label: String, val badgeColorHex: Long) {
+  DEMO_MODE("DEMO MODE", 0xFFF59E0B),
+  LOADING("LOADING", 0xFF38BDF8),
+  READY("READY", 0xFF10B981),
+  FAILED("FAILED", 0xFFEF4444)
+}
+
+/**
+ * Diagnostic status for AI runtime, ADB bridge, and Python sandbox
+ */
+data class SubsystemStatus(
+  val state: SystemLifecycleState,
+  val message: String,
+  val detail: String? = null,
+  val lastVerifiedTimestamp: Long = System.currentTimeMillis()
+)
+
+/**
+ * 3DS Bottom Screen Touch Point
+ */
+data class TouchPoint(
+  val xNorm: Float, // 0.0 - 1.0
+  val yNorm: Float, // 0.0 - 1.0
+  val isDown: Boolean = true
+)
+
+/**
  * Snapshot of emulated virtual console state
  */
 data class GameStateSnapshot(
@@ -146,11 +184,11 @@ data class GameStateSnapshot(
   val frameNumber: Long = 0L,
   val playerX: Int = 12,
   val playerY: Int = 18,
-  val playerHp: Int = 22,
-  val playerMaxHp: Int = 22,
+  val playerHp: Int = 20,
+  val playerMaxHp: Int = 20,
   val playerLevel: Int = 5,
-  val coins: Int = 3000,
-  val zoneName: String = "Littleroot Town",
+  val coins: Int = 1000,
+  val zoneName: String = "Pallet Town - Route 1",
   val dialogText: String = "Now tell me. Are you a boy or a girl?",
   val isInBattle: Boolean = false,
   val enemyName: String? = null,
@@ -159,6 +197,11 @@ data class GameStateSnapshot(
   val activeCheatsCount: Int = 0,
   val lastInputKey: String = "IDLE",
   val inputBufferHex: String = "0x0000",
+  val pressedKeys: Set<GamepadKey> = emptySet(),
+  val inputOwner: InputOwner = InputOwner.HUMAN,
+  val isPaused: Boolean = false,
+  val touchPoint: TouchPoint? = null,
+  val circlePadOffset: Pair<Float, Float> = Pair(0f, 0f),
   val detections: List<VisionDetection> = emptyList(),
   val memoryWatch: List<MemoryWatchEntry> = emptyList()
 )
@@ -169,6 +212,6 @@ data class GameStateSnapshot(
 enum class GamepadKey {
   UP, DOWN, LEFT, RIGHT,
   A, B, X, Y,
-  L, R,
-  START, SELECT, MENU
+  L, R, ZL, ZR,
+  START, SELECT, HOME, MENU
 }
