@@ -75,9 +75,43 @@ class VirtualConsoleEngine(
   private val frozenAddresses = mutableSetOf<String>()
 
   private var loopJob: Job? = null
+  private var forceNextShiny = false
+  private var speedMultiplier = 1.0f
 
   init {
     startEngineLoop()
+  }
+
+  fun forceShinyNextEncounter() {
+    forceNextShiny = true
+  }
+
+  fun setSpeedMultiplier(multiplier: Float) {
+    speedMultiplier = multiplier.coerceIn(0.25f, 8.0f)
+  }
+
+  fun restoreSnapshot(snapshot: GameStateSnapshot) {
+    _gameState.value = snapshot
+    rawMemoryWrite("0x02024284", snapshot.playerX)
+    rawMemoryWrite("0x02024286", snapshot.playerY)
+    rawMemoryWrite("0x0202402C", snapshot.playerHp)
+    rawMemoryWrite("0x02024090", snapshot.coins)
+  }
+
+  fun stepSingleFrame() {
+    val current = _gameState.value
+    val newFrame = current.frameNumber + 1
+    applyActiveCheats()
+    processContinuousInputPhysics()
+    val detections = generateVisionDetections(current)
+    val watchEntries = generateMemoryWatchList(current)
+    _gameState.update {
+      it.copy(
+        frameNumber = newFrame,
+        detections = detections,
+        memoryWatch = watchEntries
+      )
+    }
   }
 
   // --------------------------------------------------------------------------
@@ -255,7 +289,7 @@ class VirtualConsoleEngine(
       var physicsCounter = 0
       while (isActive) {
         frame++
-        delay(16) // ~60 FPS update cycle
+        delay((16L / speedMultiplier).toLong().coerceAtLeast(2L))
 
         // Halt frame progression if paused
         if (_gameState.value.isPaused) {
@@ -320,29 +354,50 @@ class VirtualConsoleEngine(
       var enemyHp = state.enemyHp
       var enemyMaxHp = state.enemyMaxHp
       var dialog = state.dialogText
+      var isShiny = state.isEnemyShiny
 
       if (!battle && (dx != 0 || dy != 0)) {
         if (Random.nextInt(100) < 8) { // 8% encounter check
           battle = true
           val wildList = if (state.scenario == GameScenario.POKEMON_RED) {
-            listOf("Wild Pidgey", "Wild Rattata", "Wild Nidoran♂", "Wild Pikachu", "Wild Caterpie")
+            listOf("Pidgey", "Rattata", "Nidoran♂", "Pikachu", "Caterpie")
           } else {
-            listOf("Wild Poochyena", "Wild Zigzagoon", "Wild Wurmple", "Wild Taillow", "Wild Wingull")
+            listOf("Poochyena", "Zigzagoon", "Wurmple", "Taillow", "Wingull")
           }
-          enemy = wildList.random()
+          val baseName = wildList.random()
+          isShiny = forceNextShiny || (Random.nextInt(48) == 0)
+          forceNextShiny = false
+
+          enemy = if (isShiny) "Shiny $baseName ✨" else "Wild $baseName"
           enemyHp = 18
           enemyMaxHp = 18
-          dialog = "A $enemy appeared! What will you do?"
+          dialog = if (isShiny) {
+            "✨ A wild SHINY $baseName appeared! Golden sparkles burst! ✨"
+          } else {
+            "A $enemy appeared! What will you do?"
+          }
         }
       }
 
       // Single action clicks (A attacks in battle)
+      var newCoins = state.coins
+      var newExp = state.playerExp
+      var newLevel = state.playerLevel
       if (keys.contains(GamepadKey.A) && battle) {
         val newEnemyHp = (enemyHp - 7).coerceAtLeast(0)
         if (newEnemyHp == 0) {
           battle = false
           enemy = null
-          dialog = "Enemy defeated! Gained 74 EXP and \$120."
+          isShiny = false
+          newCoins += 120
+          newExp += 74
+          if (newExp >= 100) {
+            newLevel += 1
+            newExp -= 100
+            dialog = "Enemy defeated! Gained 74 EXP & $120. Leveled up to Lv $newLevel!"
+          } else {
+            dialog = "Enemy defeated! Gained 74 EXP and $120."
+          }
         } else {
           enemyHp = newEnemyHp
           dialog = "Direct hit! Enemy HP down to $newEnemyHp."
@@ -352,17 +407,24 @@ class VirtualConsoleEngine(
       state.copy(
         playerX = newX,
         playerY = newY,
+        coins = newCoins,
+        playerExp = newExp,
+        playerLevel = newLevel,
         isInBattle = battle,
         enemyName = enemy,
         enemyHp = enemyHp,
         enemyMaxHp = enemyMaxHp,
+        isEnemyShiny = isShiny,
+        shinySparkles = isShiny,
         dialogText = dialog
       )
     }
 
-    // Reflect player coordinates in live emulated RAM
+    // Reflect player coordinates and stats in live emulated RAM
     rawMemoryWrite("0x02024284", _gameState.value.playerX)
     rawMemoryWrite("0x02024286", _gameState.value.playerY)
+    rawMemoryWrite("0x02024030", _gameState.value.coins)
+    rawMemoryWrite("0x02024038", _gameState.value.playerLevel)
   }
 
   // --------------------------------------------------------------------------

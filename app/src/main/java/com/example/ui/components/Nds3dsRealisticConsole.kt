@@ -59,8 +59,11 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.example.model.ConsoleCustomizationConfig
 import com.example.model.GamepadKey
 import com.example.model.GameStateSnapshot
+import com.example.model.GrindBotState
+import com.example.model.GrindBotTelemetry
 import kotlin.math.roundToInt
 
 // Authentic Nintendo 3DS Cosmos Black & Metallic Slate Blue Palette
@@ -82,6 +85,8 @@ private val Nds3dLed = Color(0xFF06B6D4)
 fun Nds3dsRealisticConsole(
   gameState: GameStateSnapshot,
   showVisionOverlay: Boolean,
+  customizationConfig: ConsoleCustomizationConfig = ConsoleCustomizationConfig(),
+  grindBotTelemetry: GrindBotTelemetry? = null,
   onKeyDown: (GamepadKey) -> Unit,
   onKeyUp: (GamepadKey) -> Unit,
   onCirclePad: (Float, Float) -> Unit,
@@ -131,6 +136,8 @@ fun Nds3dsRealisticConsole(
         Top3dsLidUnit(
           gameState = gameState,
           showVisionOverlay = showVisionOverlay,
+          config = customizationConfig,
+          grindBotTelemetry = grindBotTelemetry,
           modifier = Modifier
             .fillMaxWidth()
             .weight(1.05f)
@@ -152,6 +159,7 @@ fun Nds3dsRealisticConsole(
         // -------------------------------------------------------------
         Bottom3dsBodyUnit(
           gameState = gameState,
+          config = customizationConfig,
           onKeyDown = { key -> triggerHaptic(10); onKeyDown(key) },
           onKeyUp = { key -> onKeyUp(key) },
           onCirclePad = onCirclePad,
@@ -174,6 +182,8 @@ fun Nds3dsRealisticConsole(
 private fun Top3dsLidUnit(
   gameState: GameStateSnapshot,
   showVisionOverlay: Boolean,
+  config: ConsoleCustomizationConfig,
+  grindBotTelemetry: GrindBotTelemetry?,
   modifier: Modifier = Modifier
 ) {
   Box(
@@ -181,7 +191,12 @@ private fun Top3dsLidUnit(
       .clip(RoundedCornerShape(topStart = 20.dp, topEnd = 20.dp, bottomStart = 6.dp, bottomEnd = 6.dp))
       .background(
         Brush.verticalGradient(
-          colors = listOf(NdsChassisDark, NdsChassisMain, NdsChassisHighlight, NdsChassisDark)
+          colors = listOf(
+            config.activeShellDeepColor,
+            config.activeShellColor,
+            config.activeShellHighlightColor,
+            config.activeShellDeepColor
+          )
         )
       )
       .border(1.5.dp, Color(0xFF3B82F6).copy(alpha = 0.4f), RoundedCornerShape(topStart = 20.dp, topEnd = 20.dp, bottomStart = 6.dp, bottomEnd = 6.dp))
@@ -214,6 +229,47 @@ private fun Top3dsLidUnit(
 
         // Right rubber bumper
         Box(modifier = Modifier.size(6.dp, 3.dp).background(Color(0xFF334155), RoundedCornerShape(1.dp)))
+      }
+
+      // GRIND BOT HUD BANNER IF ACTIVE ON 3DS
+      if (grindBotTelemetry?.isEnabled == true) {
+        Box(
+          modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(4.dp))
+            .background(
+              if (grindBotTelemetry.currentState == GrindBotState.SHINY_LOCKED)
+                Color(0xFF854D0E)
+              else
+                Color(0xCC064E3B)
+            )
+            .border(
+              0.5.dp,
+              if (grindBotTelemetry.currentState == GrindBotState.SHINY_LOCKED) Color(0xFFFACC15) else Color(0xFF10B981),
+              RoundedCornerShape(4.dp)
+            )
+            .padding(horizontal = 6.dp, vertical = 2.dp)
+        ) {
+          Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+          ) {
+            Text(
+              text = if (grindBotTelemetry.currentState == GrindBotState.SHINY_LOCKED) "✨ SHINY DETECTED!" else "🤖 BOT: ${grindBotTelemetry.goal.displayName.take(14)}",
+              color = Color.White,
+              fontSize = 7.5.sp,
+              fontWeight = FontWeight.Bold,
+              fontFamily = FontFamily.Monospace
+            )
+            Text(
+              text = "Enc: ${grindBotTelemetry.totalEncounters} • ✨ ${grindBotTelemetry.totalShiniesFound}",
+              color = if (grindBotTelemetry.currentState == GrindBotState.SHINY_LOCKED) Color(0xFFFACC15) else Color(0xFF34D399),
+              fontSize = 7.5.sp,
+              fontFamily = FontFamily.Monospace
+            )
+          }
+        }
       }
 
       // Middle Row: Left Speaker, Top Widescreen, Right Speaker & 3D Depth Slider
@@ -340,6 +396,7 @@ private fun HingeWithExtendedTriggers(
 @Composable
 private fun Bottom3dsBodyUnit(
   gameState: GameStateSnapshot,
+  config: ConsoleCustomizationConfig,
   onKeyDown: (GamepadKey) -> Unit,
   onKeyUp: (GamepadKey) -> Unit,
   onCirclePad: (Float, Float) -> Unit,
@@ -353,7 +410,12 @@ private fun Bottom3dsBodyUnit(
       .clip(RoundedCornerShape(bottomStart = 22.dp, bottomEnd = 22.dp, topStart = 6.dp, topEnd = 6.dp))
       .background(
         Brush.verticalGradient(
-          colors = listOf(NdsChassisDark, NdsChassisMain, Color(0xFF0A0F1D))
+          colors = listOf(
+            config.activeShellHighlightColor,
+            config.activeShellColor,
+            config.activeShellDeepColor,
+            Color(0xFF0A0F1D)
+          )
         )
       )
       .border(1.5.dp, Color(0xFF1E3A8A), RoundedCornerShape(bottomStart = 22.dp, bottomEnd = 22.dp, topStart = 6.dp, topEnd = 6.dp))
@@ -382,7 +444,7 @@ private fun Bottom3dsBodyUnit(
           InteractiveCirclePad(onMove = onCirclePad)
 
           // 3DS Tactile D-Pad
-          NdsTactileDpad(onKeyDown = onKeyDown, onKeyUp = onKeyUp)
+          NdsTactileDpad(config = config, onKeyDown = onKeyDown, onKeyUp = onKeyUp)
         }
 
         // Center: 4:3 Resistive Touch Screen (320x240) with touch digitizer
@@ -410,7 +472,7 @@ private fun Bottom3dsBodyUnit(
           modifier = Modifier.width(100.dp).fillMaxHeight()
         ) {
           // Diamond ABXY Buttons
-          NdsDiamondActionButtons(onKeyDown = onKeyDown, onKeyUp = onKeyUp)
+          NdsDiamondActionButtons(config = config, onKeyDown = onKeyDown, onKeyUp = onKeyUp)
 
           // START & SELECT buttons
           Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -687,6 +749,7 @@ private fun InteractiveCirclePad(
  */
 @Composable
 private fun NdsTactileDpad(
+  config: ConsoleCustomizationConfig,
   onKeyDown: (GamepadKey) -> Unit,
   onKeyUp: (GamepadKey) -> Unit
 ) {
@@ -702,14 +765,14 @@ private fun NdsTactileDpad(
       modifier = Modifier
         .width(span)
         .height(armW)
-        .background(Color(0xFF1E293B), RoundedCornerShape(3.dp))
+        .background(config.activeDpadColor, RoundedCornerShape(3.dp))
         .border(0.5.dp, Color(0xFF334155), RoundedCornerShape(3.dp))
     )
     Box(
       modifier = Modifier
         .width(armW)
         .height(span)
-        .background(Color(0xFF1E293B), RoundedCornerShape(3.dp))
+        .background(config.activeDpadColor, RoundedCornerShape(3.dp))
         .border(0.5.dp, Color(0xFF334155), RoundedCornerShape(3.dp))
     )
 
@@ -762,10 +825,13 @@ private fun HoldableDpadKey(
  */
 @Composable
 private fun NdsDiamondActionButtons(
+  config: ConsoleCustomizationConfig,
   onKeyDown: (GamepadKey) -> Unit,
   onKeyUp: (GamepadKey) -> Unit
 ) {
   val span = 84.dp
+  val isFamicom = config.isFamicomButtons
+
   Box(
     modifier = Modifier.size(span),
     contentAlignment = Alignment.Center
@@ -774,7 +840,8 @@ private fun NdsDiamondActionButtons(
     HoldableRoundButton(
       label = "X",
       key = GamepadKey.X,
-      color = Color(0xFF38BDF8),
+      color = if (isFamicom) Color(0xFF2563EB) else config.activeButtonColor,
+      textColor = if (isFamicom) Color.White else config.activeButtonTextColor,
       onKeyDown = onKeyDown,
       onKeyUp = onKeyUp,
       modifier = Modifier.align(Alignment.TopCenter)
@@ -783,7 +850,8 @@ private fun NdsDiamondActionButtons(
     HoldableRoundButton(
       label = "Y",
       key = GamepadKey.Y,
-      color = Color(0xFF22C55E),
+      color = if (isFamicom) Color(0xFF16A34A) else config.activeButtonColor,
+      textColor = if (isFamicom) Color.White else config.activeButtonTextColor,
       onKeyDown = onKeyDown,
       onKeyUp = onKeyUp,
       modifier = Modifier.align(Alignment.CenterStart)
@@ -792,7 +860,8 @@ private fun NdsDiamondActionButtons(
     HoldableRoundButton(
       label = "A",
       key = GamepadKey.A,
-      color = Color(0xFFEF4444),
+      color = if (isFamicom) Color(0xFFDC2626) else config.activeButtonColor,
+      textColor = if (isFamicom) Color.White else config.activeButtonTextColor,
       onKeyDown = onKeyDown,
       onKeyUp = onKeyUp,
       modifier = Modifier.align(Alignment.CenterEnd)
@@ -801,7 +870,8 @@ private fun NdsDiamondActionButtons(
     HoldableRoundButton(
       label = "B",
       key = GamepadKey.B,
-      color = Color(0xFFEAB308),
+      color = if (isFamicom) Color(0xFFEAB308) else config.activeButtonColor,
+      textColor = if (isFamicom) Color.White else config.activeButtonTextColor,
       onKeyDown = onKeyDown,
       onKeyUp = onKeyUp,
       modifier = Modifier.align(Alignment.BottomCenter)
@@ -814,6 +884,7 @@ private fun HoldableRoundButton(
   label: String,
   key: GamepadKey,
   color: Color,
+  textColor: Color = Color.White,
   onKeyDown: (GamepadKey) -> Unit,
   onKeyUp: (GamepadKey) -> Unit,
   modifier: Modifier = Modifier
@@ -827,11 +898,11 @@ private fun HoldableRoundButton(
       .shadow(3.dp, CircleShape)
       .background(
         Brush.verticalGradient(
-          colors = listOf(Color(0xFF334155), NdsButtonFace, Color(0xFF0F172A))
+          colors = listOf(Color(0xFF334155), color, Color(0xFF0F172A))
         ),
         CircleShape
       )
-      .border(1.dp, Color(0xFF475569), CircleShape)
+      .border(1.dp, color.copy(alpha = 0.8f), CircleShape)
       .pointerInput(key) {
         awaitPointerEventScope {
           while (true) {
@@ -849,8 +920,8 @@ private fun HoldableRoundButton(
   ) {
     Text(
       text = label,
-      color = color,
-      fontSize = 12.sp,
+      color = textColor,
+      fontSize = 11.sp,
       fontWeight = FontWeight.Black,
       fontFamily = FontFamily.SansSerif
     )

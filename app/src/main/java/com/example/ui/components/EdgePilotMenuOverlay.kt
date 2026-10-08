@@ -64,7 +64,12 @@ import com.example.ui.NavigationTab
 import com.example.ui.screens.AdbAndRemoteScreen
 import com.example.ui.screens.AiChatAndGoalsScreen
 import com.example.ui.screens.AiConfigDashboardScreen
+import com.example.ui.screens.CheatEngineScreen
+import com.example.ui.screens.ConsoleCustomizationScreen
+import com.example.ui.screens.DevToolsScreen
+import com.example.ui.screens.GrindBotScreen
 import com.example.ui.screens.MemoryInspectorScreen
+import com.example.ui.screens.ModHubScreen
 import com.example.ui.screens.PythonAutomationScreen
 import com.example.ui.theme.DarkBackground
 import com.example.ui.theme.DarkSurfaceElevated
@@ -420,9 +425,14 @@ fun EdgePilotMenuOverlay(
                 }
               }
             }
+            NavigationTab.GRIND_BOT -> GrindBotScreen(viewModel = viewModel)
+            NavigationTab.CUSTOMIZE -> ConsoleCustomizationScreen(viewModel = viewModel)
+            NavigationTab.CHEATS_CODES -> CheatEngineScreen(viewModel = viewModel)
+            NavigationTab.MOD_HUB -> ModHubScreen(viewModel = viewModel)
+            NavigationTab.DEV_TOOLS -> DevToolsScreen(viewModel = viewModel)
+            NavigationTab.MEMORY_CHEATS -> MemoryInspectorScreen(viewModel = viewModel)
             NavigationTab.AI_CONFIG -> AiConfigDashboardScreen(viewModel = viewModel)
             NavigationTab.CHAT_GOALS -> AiChatAndGoalsScreen(viewModel = viewModel)
-            NavigationTab.MEMORY_CHEATS -> MemoryInspectorScreen(viewModel = viewModel)
             NavigationTab.PYTHON_TASKS -> PythonAutomationScreen(viewModel = viewModel)
             NavigationTab.ADB_REMOTE -> AdbAndRemoteScreen(viewModel = viewModel)
           }

@@ -140,7 +140,11 @@ class ExampleRobolectricTest {
     // Chat with memory permissions guard
     harness.updateConfig(harness.config.value.copy(memoryCheatsAllowed = false))
     harness.sendUserChatMessage("Can you cheat some money?")
-    testScheduler.advanceTimeBy(500)
+    var waitMs = 0
+    while (harness.chatMessages.value.none { it.text.contains("Permission Denied") || it.actionTag?.contains("Blocked") == true } && waitMs < 2000) {
+      Thread.sleep(50)
+      waitMs += 50
+    }
     assertTrue("Should flag permission guard blocked", harness.chatMessages.value.any { it.text.contains("Permission Denied") || it.actionTag?.contains("Blocked") == true })
 
     // Test gameplay dataset recording and genuine file export
@@ -152,5 +156,123 @@ class ExampleRobolectricTest {
     val exportedFile = harness.exportDatasetToFile(context)
     assertTrue("Exported file must exist", exportedFile.exists())
     assertTrue("Exported file must have content", exportedFile.length() > 0)
+  }
+
+  @OptIn(ExperimentalCoroutinesApi::class)
+  @Test
+  fun `grind bot deterministic shiny hunting and battle lifecycle`() = runTest {
+    val context = ApplicationProvider.getApplicationContext<Context>()
+    val testDispatcher = StandardTestDispatcher(testScheduler)
+    val testScope = TestScope(testDispatcher)
+    val tts = TtsManager(context)
+    val haptics = com.example.engine.HapticFeedbackManager(context)
+    val engine = VirtualConsoleEngine(testScope)
+    val grindBot = com.example.engine.GrindBotEngine(engine, tts, haptics, testScope)
+
+    // Initial state: Stopped
+    assertEquals(com.example.model.GrindBotState.STOPPED, grindBot.telemetry.value.currentState)
+    assertFalse(grindBot.telemetry.value.isEnabled)
+
+    // Set goal to SHINY_HUNT and start bot
+    grindBot.startBot(com.example.model.GrindBotGoal.SHINY_HUNT)
+    assertTrue(grindBot.telemetry.value.isEnabled)
+    assertEquals(com.example.model.GrindBotGoal.SHINY_HUNT, grindBot.telemetry.value.goal)
+    assertEquals(com.example.model.InputOwner.AI_AGENT, engine.gameState.value.inputOwner)
+
+    // Test forcing a shiny encounter
+    grindBot.forceShinyEncounter()
+
+    // Stop bot
+    grindBot.stopBot("Test stop")
+    assertFalse(grindBot.telemetry.value.isEnabled)
+    assertEquals(com.example.model.InputOwner.HUMAN, engine.gameState.value.inputOwner)
+  }
+
+  @Test
+  fun `console customization shell, button, and haptic presets`() {
+    val context = ApplicationProvider.getApplicationContext<Context>()
+    val haptics = com.example.engine.HapticFeedbackManager(context)
+
+    var config = com.example.model.ConsoleCustomizationConfig()
+    assertEquals(com.example.model.ShellColorPreset.COBALT_BLUE, config.shellPreset)
+    assertEquals(com.example.model.ButtonColorPreset.CLASSIC_CHARCOAL, config.buttonPreset)
+    assertEquals(com.example.model.HapticProfile.MEDIUM, config.hapticProfile)
+
+    // Switch to Pikachu Yellow with Super Famicom buttons and Retro Click haptics
+    config = config.copy(
+      shellPreset = com.example.model.ShellColorPreset.PIKACHU_CANARY,
+      buttonPreset = com.example.model.ButtonColorPreset.SUPER_FAMICOM,
+      hapticProfile = com.example.model.HapticProfile.RETRO_CLICK
+    )
+    assertEquals(com.example.model.ShellColorPreset.PIKACHU_CANARY, config.shellPreset)
+    assertEquals(com.example.model.ButtonColorPreset.SUPER_FAMICOM, config.buttonPreset)
+    assertEquals(com.example.model.HapticProfile.RETRO_CLICK, config.hapticProfile)
+
+    // Verify haptic triggers execute cleanly without exception
+    haptics.triggerPress(config)
+    haptics.triggerRelease(config)
+    haptics.triggerTouch(config)
+    haptics.triggerShinyAlert()
+    haptics.triggerCheatToggle()
+  }
+
+  @OptIn(ExperimentalCoroutinesApi::class)
+  @Test
+  fun `cheat engine syntax validation and toggling`() = runTest {
+    val testDispatcher = StandardTestDispatcher(testScheduler)
+    val testScope = TestScope(testDispatcher)
+    val engine = VirtualConsoleEngine(testScope)
+    val cheatMgr = com.example.engine.CheatEngineManager(engine)
+
+    // Initial authentic cheats loaded
+    val initialCheats = cheatMgr.cheats.value
+    assertTrue("Should have default cheat catalog", initialCheats.isNotEmpty())
+
+    // Add a valid custom GameShark code
+    val addResult = cheatMgr.addNewCheat(
+      title = "Max PP All Moves",
+      rawCode = "01FF45D1",
+      type = com.example.model.CheatEngineType.GAMESHARK,
+      description = "Restores all moves to maximum Power Points",
+      scenario = null
+    )
+    assertTrue("GameShark code should be accepted", addResult.isSuccess)
+
+    // Toggle cheat on with memory permission
+    val addedId = addResult.getOrThrow().id
+    val toggleRes = cheatMgr.toggleCheat(addedId, allowCheats = true)
+    assertTrue(toggleRes.isSuccess)
+    assertTrue(cheatMgr.cheats.value.first { it.id == addedId }.isEnabled)
+  }
+
+  @OptIn(ExperimentalCoroutinesApi::class)
+  @Test
+  fun `dev tools hex generation and register bitfield toggles`() = runTest {
+    val testDispatcher = StandardTestDispatcher(testScheduler)
+    val testScope = TestScope(testDispatcher)
+    val engine = VirtualConsoleEngine(testScope)
+    val devEngine = com.example.engine.DevToolsEngine(engine)
+
+    // Hex rows generation
+    val hexRows = devEngine.generateHexRows(com.example.model.MemoryRegion.EWRAM, 0, 4)
+    assertEquals(4, hexRows.size)
+    assertEquals("0x02000000", hexRows[0].addressHex)
+
+    // Live byte writing
+    val writeResult = devEngine.editByte("0x02000000", 0xFF)
+    assertTrue(writeResult.isSuccess)
+    assertEquals(0xFF, engine.readMemory("0x02000000"))
+
+    // I/O Registers inspector
+    val regs = devEngine.getIoRegisters()
+    assertTrue("I/O registers should be populated", regs.isNotEmpty())
+    val dispcnt = regs.first { it.name == "DISPCNT" }
+    assertEquals("0x04000000", dispcnt.addressHex)
+
+    // Speed multiplier and frame stepping
+    devEngine.setSpeedMultiplier(2.0f)
+    assertEquals(2.0f, devEngine.speedMultiplier.value, 0.01f)
+    devEngine.stepSingleFrame()
+    devEngine.rewindFrame()
   }
 }

@@ -34,6 +34,8 @@ class MainActivity : ComponentActivity() {
         val gameState by viewModel.consoleEngine.gameState.collectAsState()
         val showVisionOverlay by viewModel.showVisionOverlay.collectAsState()
         val isMenuOpen by viewModel.isMenuOpen.collectAsState()
+        val customizationConfig by viewModel.customizationConfig.collectAsState()
+        val grindBotTelemetry by viewModel.grindBot.telemetry.collectAsState()
 
         // Handle Android Back button to close menu if open
         BackHandler(enabled = isMenuOpen) {
@@ -58,6 +60,8 @@ class MainActivity : ComponentActivity() {
               Nds3dsRealisticConsole(
                 gameState = gameState,
                 showVisionOverlay = showVisionOverlay,
+                customizationConfig = customizationConfig,
+                grindBotTelemetry = grindBotTelemetry,
                 onKeyDown = { key -> viewModel.onKeyDown(key) },
                 onKeyUp = { key -> viewModel.onKeyUp(key) },
                 onCirclePad = { dx, dy -> viewModel.onCirclePad(dx, dy) },
@@ -70,6 +74,8 @@ class MainActivity : ComponentActivity() {
               GbaRealisticConsole(
                 gameState = gameState,
                 showVisionOverlay = showVisionOverlay,
+                customizationConfig = customizationConfig,
+                grindBotTelemetry = grindBotTelemetry,
                 onKeyDown = { key -> viewModel.onKeyDown(key) },
                 onKeyUp = { key -> viewModel.onKeyUp(key) },
                 onMenuPress = { viewModel.toggleMenu() },

@@ -232,8 +232,35 @@ private fun GameDisplayCanvas(gameState: GameStateSnapshot) {
       // Opponent Sprite placeholder (animated)
       val oppX = width * 0.74f
       val oppY = height * 0.22f + pulseAnim
+      val oppColor = if (gameState.isEnemyShiny) Color(0xFFF59E0B) else Color(0xFFE11D48)
+
+      // Golden sparkle stars if Shiny!
+      if (gameState.isEnemyShiny) {
+        drawCircle(
+          color = Color(0xFFFACC15),
+          radius = width * 0.095f,
+          center = Offset(oppX, oppY),
+          style = Stroke(width = 2.5f)
+        )
+        drawCircle(
+          color = Color(0xFFFEF08A),
+          radius = 5.5f,
+          center = Offset(oppX - 26f + pulseAnim * 2, oppY - 22f)
+        )
+        drawCircle(
+          color = Color(0xFFFEF08A),
+          radius = 6.5f,
+          center = Offset(oppX + 24f - pulseAnim * 2, oppY - 20f)
+        )
+        drawCircle(
+          color = Color(0xFFFEF08A),
+          radius = 5.0f,
+          center = Offset(oppX + 18f, oppY + 24f + pulseAnim)
+        )
+      }
+
       drawCircle(
-        color = Color(0xFFE11D48),
+        color = oppColor,
         radius = width * 0.08f,
         center = Offset(oppX, oppY)
       )

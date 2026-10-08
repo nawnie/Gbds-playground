@@ -51,8 +51,11 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.example.model.ConsoleCustomizationConfig
 import com.example.model.GamepadKey
 import com.example.model.GameStateSnapshot
+import com.example.model.GrindBotState
+import com.example.model.GrindBotTelemetry
 
 // Cobalt Metallic Blue Palette exactly matching the physical GBA SP photo
 private val CobaltShellOuter = Color(0xFF142B66)
@@ -74,6 +77,8 @@ private val LedActiveGreen = Color(0xFF22C55E)
 fun GbaRealisticConsole(
   gameState: GameStateSnapshot,
   showVisionOverlay: Boolean,
+  customizationConfig: ConsoleCustomizationConfig = ConsoleCustomizationConfig(),
+  grindBotTelemetry: GrindBotTelemetry? = null,
   onKeyDown: (GamepadKey) -> Unit,
   onKeyUp: (GamepadKey) -> Unit,
   onMenuPress: () -> Unit,
@@ -118,6 +123,8 @@ fun GbaRealisticConsole(
         TopLidScreenUnit(
           gameState = gameState,
           showVisionOverlay = showVisionOverlay,
+          config = customizationConfig,
+          grindBotTelemetry = grindBotTelemetry,
           modifier = Modifier
             .fillMaxWidth()
             .weight(1.02f)
@@ -125,6 +132,7 @@ fun GbaRealisticConsole(
 
         // 2. CYLINDRICAL HINGE WITH L AND R SHOULDERS
         CylindricalHingeBar(
+          config = customizationConfig,
           onKeyDown = { key -> triggerHaptic(14); onKeyDown(key) },
           onKeyUp = { key -> onKeyUp(key) },
           modifier = Modifier
@@ -134,6 +142,7 @@ fun GbaRealisticConsole(
 
         // 3. LOWER CONTROLLER UNIT (BODY)
         LowerControllerBodyUnit(
+          config = customizationConfig,
           onKeyDown = { key -> triggerHaptic(10); onKeyDown(key) },
           onKeyUp = { key -> onKeyUp(key) },
           onMenuPress = { triggerHaptic(22); onMenuPress() },
@@ -153,6 +162,8 @@ fun GbaRealisticConsole(
 private fun TopLidScreenUnit(
   gameState: GameStateSnapshot,
   showVisionOverlay: Boolean,
+  config: ConsoleCustomizationConfig,
+  grindBotTelemetry: GrindBotTelemetry?,
   modifier: Modifier = Modifier
 ) {
   Box(
@@ -160,13 +171,18 @@ private fun TopLidScreenUnit(
       .clip(RoundedCornerShape(topStart = 24.dp, topEnd = 24.dp, bottomStart = 6.dp, bottomEnd = 6.dp))
       .background(
         Brush.verticalGradient(
-          colors = listOf(CobaltShellOuter, CobaltShellBright, CobaltShellMain, CobaltShellOuter)
+          colors = listOf(
+            config.activeShellDeepColor,
+            config.activeShellColor,
+            config.activeShellHighlightColor,
+            config.activeShellDeepColor
+          )
         )
       )
       .border(
         width = 1.5.dp,
         brush = Brush.verticalGradient(
-          colors = listOf(CobaltShellHighlight, Color(0xFF1E3A8A))
+          colors = listOf(config.activeShellHighlightColor, Color(0xFF1E3A8A))
         ),
         shape = RoundedCornerShape(topStart = 24.dp, topEnd = 24.dp, bottomStart = 6.dp, bottomEnd = 6.dp)
       )
@@ -208,6 +224,47 @@ private fun TopLidScreenUnit(
         }
       }
 
+      // GRIND BOT HUD BANNER IF ACTIVE
+      if (grindBotTelemetry?.isEnabled == true) {
+        Box(
+          modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(4.dp))
+            .background(
+              if (grindBotTelemetry.currentState == GrindBotState.SHINY_LOCKED)
+                Color(0xFF854D0E)
+              else
+                Color(0xCC064E3B)
+            )
+            .border(
+              0.5.dp,
+              if (grindBotTelemetry.currentState == GrindBotState.SHINY_LOCKED) Color(0xFFFACC15) else Color(0xFF10B981),
+              RoundedCornerShape(4.dp)
+            )
+            .padding(horizontal = 6.dp, vertical = 2.dp)
+        ) {
+          Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+          ) {
+            Text(
+              text = if (grindBotTelemetry.currentState == GrindBotState.SHINY_LOCKED) "✨ SHINY LOCKED!" else "🤖 GRIND BOT ACTIVE",
+              color = Color.White,
+              fontSize = 7.5.sp,
+              fontWeight = FontWeight.Bold,
+              fontFamily = FontFamily.Monospace
+            )
+            Text(
+              text = "Encounters: ${grindBotTelemetry.totalEncounters} • Shinies: ${grindBotTelemetry.totalShiniesFound}",
+              color = if (grindBotTelemetry.currentState == GrindBotState.SHINY_LOCKED) Color(0xFFFACC15) else Color(0xFF34D399),
+              fontSize = 7.5.sp,
+              fontFamily = FontFamily.Monospace
+            )
+          }
+        }
+      }
+
       Spacer(modifier = Modifier.height(2.dp))
 
       // Obsidian Black Bezel framing the 3:2 GBA Screen
@@ -241,6 +298,7 @@ private fun TopLidScreenUnit(
  */
 @Composable
 private fun CylindricalHingeBar(
+  config: ConsoleCustomizationConfig,
   onKeyDown: (GamepadKey) -> Unit,
   onKeyUp: (GamepadKey) -> Unit,
   modifier: Modifier = Modifier
@@ -250,7 +308,12 @@ private fun CylindricalHingeBar(
       .clip(RoundedCornerShape(6.dp))
       .background(
         Brush.verticalGradient(
-          colors = listOf(Color(0xFF09142C), CobaltShellOuter, CobaltShellBright, CobaltShellOuter, Color(0xFF09142C))
+          colors = listOf(
+            config.activeShellDeepColor,
+            config.activeShellColor,
+            config.activeShellHighlightColor,
+            config.activeShellDeepColor
+          )
         )
       )
       .border(1.dp, Color(0xFF1E293B), RoundedCornerShape(6.dp)),
@@ -328,6 +391,7 @@ private fun HoldableGbaShoulderTrigger(
  */
 @Composable
 private fun LowerControllerBodyUnit(
+  config: ConsoleCustomizationConfig,
   onKeyDown: (GamepadKey) -> Unit,
   onKeyUp: (GamepadKey) -> Unit,
   onMenuPress: () -> Unit,
@@ -338,13 +402,18 @@ private fun LowerControllerBodyUnit(
       .clip(RoundedCornerShape(bottomStart = 26.dp, bottomEnd = 26.dp, topStart = 6.dp, topEnd = 6.dp))
       .background(
         Brush.verticalGradient(
-          colors = listOf(CobaltShellOuter, CobaltShellBright, CobaltShellMain, Color(0xFF0F1E44))
+          colors = listOf(
+            config.activeShellHighlightColor,
+            config.activeShellColor,
+            config.activeShellDeepColor,
+            Color(0xFF0F1E44)
+          )
         )
       )
       .border(
         width = 1.5.dp,
         brush = Brush.verticalGradient(
-          colors = listOf(CobaltShellHighlight, Color(0xFF172D6B))
+          colors = listOf(config.activeShellHighlightColor, Color(0xFF172D6B))
         ),
         shape = RoundedCornerShape(bottomStart = 26.dp, bottomEnd = 26.dp, topStart = 6.dp, topEnd = 6.dp)
       )
@@ -390,14 +459,14 @@ private fun LowerControllerBodyUnit(
             .size(136.dp)
             .background(
               Brush.radialGradient(
-                colors = listOf(CobaltDeepWell, Color(0xFF132857))
+                colors = listOf(config.activeShellDeepColor, Color(0xFF132857))
               ),
               CircleShape
             )
             .border(1.5.dp, Color(0xFF11234F), CircleShape),
           contentAlignment = Alignment.Center
         ) {
-          AuthenticHoldableDpadCross(onKeyDown = onKeyDown, onKeyUp = onKeyUp)
+          AuthenticHoldableDpadCross(config = config, onKeyDown = onKeyDown, onKeyUp = onKeyUp)
         }
 
         // Center: 3x4 Speaker Grille Holes
@@ -411,7 +480,7 @@ private fun LowerControllerBodyUnit(
             .rotate(-28f)
             .background(
               Brush.horizontalGradient(
-                colors = listOf(CobaltDeepWell, Color(0xFF132857))
+                colors = listOf(config.activeShellDeepColor, Color(0xFF132857))
               ),
               RoundedCornerShape(41.dp)
             )
@@ -424,8 +493,24 @@ private fun LowerControllerBodyUnit(
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically
           ) {
-            HoldableRoundButtonGba("B", GamepadKey.B, onKeyDown, onKeyUp, rotation = 28f)
-            HoldableRoundButtonGba("A", GamepadKey.A, onKeyDown, onKeyUp, rotation = 28f)
+            HoldableRoundButtonGba(
+              label = "B",
+              key = GamepadKey.B,
+              customColor = if (config.isFamicomButtons) Color(0xFFEAB308) else config.activeButtonColor,
+              customTextColor = config.activeButtonTextColor,
+              onKeyDown = onKeyDown,
+              onKeyUp = onKeyUp,
+              rotation = 28f
+            )
+            HoldableRoundButtonGba(
+              label = "A",
+              key = GamepadKey.A,
+              customColor = if (config.isFamicomButtons) Color(0xFFDC2626) else config.activeButtonColor,
+              customTextColor = config.activeButtonTextColor,
+              onKeyDown = onKeyDown,
+              onKeyUp = onKeyUp,
+              rotation = 28f
+            )
           }
         }
       }
@@ -461,6 +546,7 @@ private fun LowerControllerBodyUnit(
  */
 @Composable
 private fun AuthenticHoldableDpadCross(
+  config: ConsoleCustomizationConfig,
   onKeyDown: (GamepadKey) -> Unit,
   onKeyUp: (GamepadKey) -> Unit
 ) {
@@ -479,7 +565,7 @@ private fun AuthenticHoldableDpadCross(
         .shadow(4.dp, RoundedCornerShape(4.dp))
         .background(
           Brush.verticalGradient(
-            colors = listOf(Color(0xFF3B4455), DpadCharcoal, Color(0xFF181D26))
+            colors = listOf(Color(0xFF3B4455), config.activeDpadColor, Color(0xFF181D26))
           ),
           RoundedCornerShape(4.dp)
         )
@@ -494,7 +580,7 @@ private fun AuthenticHoldableDpadCross(
         .shadow(4.dp, RoundedCornerShape(4.dp))
         .background(
           Brush.horizontalGradient(
-            colors = listOf(Color(0xFF3B4455), DpadCharcoal, Color(0xFF181D26))
+            colors = listOf(Color(0xFF3B4455), config.activeDpadColor, Color(0xFF181D26))
           ),
           RoundedCornerShape(4.dp)
         )
@@ -564,6 +650,8 @@ private fun HoldableDpadKeyGba(
 private fun HoldableRoundButtonGba(
   label: String,
   key: GamepadKey,
+  customColor: Color = ButtonCharcoal,
+  customTextColor: Color = Color(0xFFE2E8F0),
   onKeyDown: (GamepadKey) -> Unit,
   onKeyUp: (GamepadKey) -> Unit,
   rotation: Float = 0f
@@ -578,7 +666,7 @@ private fun HoldableRoundButtonGba(
       .shadow(5.dp, CircleShape)
       .background(
         Brush.verticalGradient(
-          colors = listOf(Color(0xFF3E485A), ButtonCharcoal, Color(0xFF141822))
+          colors = listOf(Color(0xFF3E485A), customColor, Color(0xFF141822))
         ),
         CircleShape
       )
@@ -600,7 +688,7 @@ private fun HoldableRoundButtonGba(
   ) {
     Text(
       text = label,
-      color = Color(0xFFE2E8F0),
+      color = customTextColor,
       fontSize = 18.sp,
       fontWeight = FontWeight.Black,
       fontFamily = FontFamily.SansSerif,
